@@ -131,6 +131,10 @@ body {
   transform: scale(0.95);
 }
 
+.mobile-only {
+  display: none;
+}
+
 /* Main Content */
 .main-content {
   display: flex;
@@ -777,8 +781,26 @@ body {
   z-index: 1000;
 }
 
+/* Sidebar Overlay (for mobile) */
+.sidebar-overlay {
+  display: none;
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.4);
+  backdrop-filter: blur(2px);
+  z-index: 99;
+}
+
+.sidebar-overlay.active {
+  display: block;
+}
+
 /* Responsive Design */
 @media (max-width: 768px) {
+  .mobile-only {
+    display: flex;
+  }
+
   .sidebar {
     position: fixed;
     left: -100%;
@@ -786,6 +808,7 @@ body {
     height: calc(100vh - var(--header-height));
     z-index: 100;
     transition: left 0.3s ease;
+    box-shadow: var(--shadow-xl);
   }
 
   .sidebar.open {
@@ -819,5 +842,24 @@ body {
     --color-text-primary: #F5F5F5;
     --color-text-secondary: #B0B0B0;
     --color-text-tertiary: #808080;
+  }
+
+  /* Dark mode status bar colors */
+  .status-bar.info {
+    background: #1E3A5F;
+    color: #90CAF9;
+    border: 1px solid #2C5282;
+  }
+
+  .status-bar.success {
+    background: #1B4D3E;
+    color: #A5D6A7;
+    border: 1px solid #2E7D5E;
+  }
+
+  .status-bar.error {
+    background: #5C1A1A;
+    color: #EF9A9A;
+    border: 1px solid #7C2D2D;
   }
 }
