@@ -23,6 +23,10 @@ export class UIManager {
     apiKey: HTMLInputElement;
     model: HTMLSelectElement;
     permissionSelects: NodeListOf<HTMLSelectElement>;
+    settingsBtn: HTMLButtonElement;
+    toolsBtn: HTMLButtonElement;
+    settingsModal: HTMLElement;
+    toolsModal: HTMLElement;
   };
 
   private currentText: string = '';
@@ -42,6 +46,10 @@ export class UIManager {
       apiKey: document.getElementById('api-key') as HTMLInputElement,
       model: document.getElementById('model') as HTMLSelectElement,
       permissionSelects: document.querySelectorAll('.permission-select'),
+      settingsBtn: document.getElementById('settings-btn') as HTMLButtonElement,
+      toolsBtn: document.getElementById('tools-btn') as HTMLButtonElement,
+      settingsModal: document.getElementById('settings-modal') as HTMLElement,
+      toolsModal: document.getElementById('tools-modal') as HTMLElement,
     };
 
     this.initializeUI();
@@ -88,6 +96,14 @@ export class UIManager {
       }
     });
 
+    // Modal controls
+    this.elements.settingsBtn.addEventListener('click', () => this.openModal('settings'));
+    this.elements.toolsBtn.addEventListener('click', () => this.openModal('tools'));
+
+    // Close modals
+    this.setupModalCloseHandlers(this.elements.settingsModal);
+    this.setupModalCloseHandlers(this.elements.toolsModal);
+
     // Provider selection
     this.elements.aiProvider.addEventListener('change', () => {
       const provider = this.elements.aiProvider.value as 'anthropic' | 'openai' | 'google';
@@ -114,6 +130,39 @@ export class UIManager {
           preferencesManager.setToolPermission(toolName, permission);
         }
       });
+    });
+  }
+
+  /**
+   * Open a modal
+   */
+  private openModal(type: 'settings' | 'tools'): void {
+    const modal = type === 'settings' ? this.elements.settingsModal : this.elements.toolsModal;
+    modal.removeAttribute('hidden');
+  }
+
+  /**
+   * Close a modal
+   */
+  private closeModal(modal: HTMLElement): void {
+    modal.setAttribute('hidden', '');
+  }
+
+  /**
+   * Setup modal close handlers
+   */
+  private setupModalCloseHandlers(modal: HTMLElement): void {
+    const closeBtn = modal.querySelector('.modal-close') as HTMLButtonElement;
+    const overlay = modal.querySelector('.modal-overlay') as HTMLDivElement;
+
+    closeBtn?.addEventListener('click', () => this.closeModal(modal));
+    overlay?.addEventListener('click', () => this.closeModal(modal));
+
+    // Close on Escape key
+    document.addEventListener('keydown', (e) => {
+      if (e.key === 'Escape' && !modal.hasAttribute('hidden')) {
+        this.closeModal(modal);
+      }
     });
   }
 
@@ -369,7 +418,7 @@ export class UIManager {
    */
   private setStatus(message: string, type: 'info' | 'success' | 'error'): void {
     this.elements.status.textContent = message;
-    this.elements.status.className = type;
+    this.elements.status.className = `status-bar ${type}`;
   }
 
   /**
