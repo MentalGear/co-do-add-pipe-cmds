@@ -13,6 +13,7 @@ import { fileTools, setPermissionCallback } from './tools';
 import { toastManager, showToast } from './toasts';
 import { ProviderConfig } from './storage';
 import { createMarkdownIframe, updateMarkdownIframe, checkContentOverflow } from './markdown';
+import { withViewTransition, generateUniqueTransitionName } from './viewTransitions';
 
 /**
  * UI Manager handles all user interface interactions
@@ -814,42 +815,45 @@ export class UIManager {
    * Display file list
    */
   private displayFileList(entries: FileSystemEntry[]): void {
-    this.elements.fileList.innerHTML = '';
+    // Use view transition for file list updates
+    withViewTransition(() => {
+      this.elements.fileList.innerHTML = '';
 
-    if (entries.length === 0) {
-      this.elements.fileList.innerHTML = '<p>No files found in the selected folder.</p>';
-      return;
-    }
+      if (entries.length === 0) {
+        this.elements.fileList.innerHTML = '<p>No files found in the selected folder.</p>';
+        return;
+      }
 
-    const files = entries.filter((e) => e.kind === 'file');
-    const directories = entries.filter((e) => e.kind === 'directory');
+      const files = entries.filter((e) => e.kind === 'file');
+      const directories = entries.filter((e) => e.kind === 'directory');
 
-    // Group by type
-    const fragment = document.createDocumentFragment();
+      // Group by type
+      const fragment = document.createDocumentFragment();
 
-    // Directories first
-    directories.forEach((entry) => {
-      const item = document.createElement('div');
-      item.className = 'file-item';
-      item.innerHTML = `
-        <span class="file-icon">📁</span>
-        <span class="file-name">${entry.path}</span>
-      `;
-      fragment.appendChild(item);
+      // Directories first
+      directories.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'file-item';
+        item.innerHTML = `
+          <span class="file-icon">📁</span>
+          <span class="file-name">${entry.path}</span>
+        `;
+        fragment.appendChild(item);
+      });
+
+      // Then files
+      files.forEach((entry) => {
+        const item = document.createElement('div');
+        item.className = 'file-item';
+        item.innerHTML = `
+          <span class="file-icon">📄</span>
+          <span class="file-name">${entry.path}</span>
+        `;
+        fragment.appendChild(item);
+      });
+
+      this.elements.fileList.appendChild(fragment);
     });
-
-    // Then files
-    files.forEach((entry) => {
-      const item = document.createElement('div');
-      item.className = 'file-item';
-      item.innerHTML = `
-        <span class="file-icon">📄</span>
-        <span class="file-name">${entry.path}</span>
-      `;
-      fragment.appendChild(item);
-    });
-
-    this.elements.fileList.appendChild(fragment);
   }
 
   /**
@@ -1029,13 +1033,22 @@ export class UIManager {
       message.textContent = content;
     }
 
-    this.elements.messages.appendChild(message);
+    // Assign unique view transition name to avoid conflicts with concurrent transitions
+    const transitionName = generateUniqueTransitionName('message');
+    message.style.viewTransitionName = transitionName;
 
-    // Track user message for positioning tool activity group
-    if (role === 'user') {
-      this.currentUserMessage = message;
-    }
-    this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+    // Use view transition for adding the message
+    withViewTransition(() => {
+      this.elements.messages.appendChild(message);
+      this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
+    }).then(() => {
+      // Remove the transition name after animation completes
+      // Check if element still exists in DOM before modifying
+      if (message.isConnected) {
+        message.style.viewTransitionName = '';
+      }
+    });
+
     return message;
   }
 
@@ -1111,14 +1124,26 @@ export class UIManager {
     group.appendChild(header);
     group.appendChild(content);
 
-    // Insert after user message so tool selection is visible near the question
-    // insertBefore with null reference appends to the end
-    if (this.currentUserMessage) {
-      this.elements.messages.insertBefore(group, this.currentUserMessage.nextSibling);
-      this.currentUserMessage = null; // Reset to avoid stale references in multi-turn conversations
-    } else {
-      this.elements.messages.appendChild(group);
-    }
+    // Assign unique view transition name to avoid conflicts with concurrent transitions
+    const transitionName = generateUniqueTransitionName('tool-activity');
+    group.style.viewTransitionName = transitionName;
+
+    // Use view transition for adding the tool activity group
+    withViewTransition(() => {
+       if (this.currentUserMessage) {
+         this.elements.messages.insertBefore(group, this.currentUserMessage.nextSibling);
+         this.currentUserMessage = null; // Reset to avoid stale references in multi-turn conversations
+       } else {
+         this.elements.messages.appendChild(group);
+       } 
+    }).then(() => {
+      // Remove the transition name after animation completes
+      // Check if element still exists in DOM before modifying
+      if (group.isConnected) {
+        group.style.viewTransitionName = '';
+      }
+    });
+
     this.currentToolActivityGroup = group;
 
     return group;
@@ -1246,10 +1271,13 @@ export class UIManager {
    * Set status message
    */
   private setStatus(message: string, type: 'info' | 'success' | 'error'): void {
-    this.elements.status.textContent = message;
-    // Only apply the type class if there's a message to display
-    // This prevents showing an empty colored bar
-    this.elements.status.className = message ? `status-bar ${type}` : 'status-bar';
+    // Use view transition for status updates
+    withViewTransition(() => {
+      this.elements.status.textContent = message;
+      // Only apply the type class if there's a message to display
+      // This prevents showing an empty colored bar
+      this.elements.status.className = message ? `status-bar ${type}` : 'status-bar';
+    });
   }
 
   /**
