@@ -862,4 +862,14 @@ body {
     color: #EF9A9A;
     border: 1px solid #7C2D2D;
   }
+
+  /* Dark mode folder info */
+  .folder-info {
+    background: #3A2F2A;
+    color: var(--color-text-primary);
+  }
+
+  .folder-info strong {
+    color: var(--color-primary);
+  }
 }
