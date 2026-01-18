@@ -26,7 +26,9 @@ export type ToolName =
   | 'create_file'
   | 'write_file'
   | 'list_files'
-  | 'get_file_metadata';
+  | 'get_file_metadata'
+  | 'cat'
+  | 'grep';
 
 export interface ToolPermissions {
   open_file: PermissionLevel;
@@ -37,6 +39,8 @@ export interface ToolPermissions {
   write_file: PermissionLevel;
   list_files: PermissionLevel;
   get_file_metadata: PermissionLevel;
+  cat: PermissionLevel;
+  grep: PermissionLevel;
 }
 
 export interface UserPreferences {
@@ -55,6 +59,8 @@ const DEFAULT_PERMISSIONS: ToolPermissions = {
   write_file: 'ask',
   list_files: 'ask',
   get_file_metadata: 'ask',
+  cat: 'ask',
+  grep: 'ask',
 };
 
 const DEFAULT_PREFERENCES: UserPreferences = {
