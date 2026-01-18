@@ -21,6 +21,7 @@ export class UIManager {
     status: HTMLDivElement;
     aiProvider: HTMLSelectElement;
     apiKey: HTMLInputElement;
+    apiKeyLink: HTMLAnchorElement;
     model: HTMLSelectElement;
     permissionSelects: NodeListOf<HTMLSelectElement>;
     settingsBtn: HTMLButtonElement;
@@ -48,6 +49,7 @@ export class UIManager {
       status: document.getElementById('status') as HTMLDivElement,
       aiProvider: document.getElementById('ai-provider') as HTMLSelectElement,
       apiKey: document.getElementById('api-key') as HTMLInputElement,
+      apiKeyLink: document.getElementById('api-key-link') as HTMLAnchorElement,
       model: document.getElementById('model') as HTMLSelectElement,
       permissionSelects: document.querySelectorAll('.permission-select'),
       settingsBtn: document.getElementById('settings-btn') as HTMLButtonElement,
@@ -71,8 +73,9 @@ export class UIManager {
     this.elements.aiProvider.value = preferencesManager.getAiProvider();
     this.elements.apiKey.value = preferencesManager.getApiKey();
 
-    // Update model dropdown
+    // Update model dropdown and API key link
     this.updateModelOptions();
+    this.updateApiKeyLink();
     this.elements.model.value = preferencesManager.getModel();
 
     // Load permission settings
@@ -134,6 +137,7 @@ export class UIManager {
       const provider = this.elements.aiProvider.value as 'anthropic' | 'openai' | 'google';
       preferencesManager.setAiProvider(provider);
       this.updateModelOptions();
+      this.updateApiKeyLink();
     });
 
     // API key
@@ -243,6 +247,20 @@ export class UIManager {
         preferencesManager.setModel(models[0]!.id);
       }
     }
+  }
+
+  /**
+   * Update API key link based on selected provider
+   */
+  private updateApiKeyLink(): void {
+    const provider = this.elements.aiProvider.value as 'anthropic' | 'openai' | 'google';
+    const apiKeyUrls = {
+      anthropic: 'https://console.anthropic.com/settings/keys',
+      openai: 'https://platform.openai.com/api-keys',
+      google: 'https://aistudio.google.com/app/apikey',
+    };
+
+    this.elements.apiKeyLink.href = apiKeyUrls[provider];
   }
 
   /**
