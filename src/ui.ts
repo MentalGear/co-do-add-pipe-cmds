@@ -67,6 +67,7 @@ export class UIManager {
   // Tool activity group for collapsible tool calls display
   private currentToolActivityGroup: HTMLDivElement | null = null;
   private toolCallCount: number = 0;
+  private currentUserMessage: HTMLDivElement | null = null;
 
   // Permission batching system
   private pendingPermissions: Array<{
@@ -1029,6 +1030,11 @@ export class UIManager {
     }
 
     this.elements.messages.appendChild(message);
+
+    // Track user message for positioning tool activity group
+    if (role === 'user') {
+      this.currentUserMessage = message;
+    }
     this.elements.messages.scrollTop = this.elements.messages.scrollHeight;
     return message;
   }
@@ -1105,7 +1111,14 @@ export class UIManager {
     group.appendChild(header);
     group.appendChild(content);
 
-    this.elements.messages.appendChild(group);
+    // Insert after user message so tool selection is visible near the question
+    // insertBefore with null reference appends to the end
+    if (this.currentUserMessage) {
+      this.elements.messages.insertBefore(group, this.currentUserMessage.nextSibling);
+      this.currentUserMessage = null; // Reset to avoid stale references in multi-turn conversations
+    } else {
+      this.elements.messages.appendChild(group);
+    }
     this.currentToolActivityGroup = group;
 
     return group;
