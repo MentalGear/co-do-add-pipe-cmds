@@ -169,6 +169,14 @@ class SandboxedWasmRuntime {
     args: string[],
     options: WorkerExecutionOptions
   ): Promise<ExecutionResult> {
+    console.log('[WASM Worker] execute() called', {
+      binarySize: wasmBinary.byteLength,
+      args,
+      hasStdin: !!options.stdin,
+      stdinLength: options.stdin?.length ?? 0,
+      fileCount: options.files ? Object.keys(options.files).length : 0,
+    });
+
     this.args = args;
     this.exitCode = 0;
     this.hasExited = false;
@@ -177,11 +185,13 @@ class SandboxedWasmRuntime {
     // Set stdin if provided
     if (options.stdin) {
       this.vfs.setStdin(options.stdin);
+      console.log('[WASM Worker] stdin set:', options.stdin.substring(0, 100) + (options.stdin.length > 100 ? '...' : ''));
     }
 
     // Set pre-loaded files
     if (options.files) {
       this.vfs.setFiles(options.files);
+      console.log('[WASM Worker] files set:', Object.keys(options.files));
     }
 
     // Note: We don't pre-create memory because WASI modules compiled with
@@ -189,8 +199,11 @@ class SandboxedWasmRuntime {
     // will be captured from exports after instantiation.
 
     try {
+      console.log('[WASM Worker] calling executeInternal...');
       await this.executeInternal(wasmBinary);
+      console.log('[WASM Worker] executeInternal completed, exitCode:', this.exitCode);
     } catch (error) {
+      console.error('[WASM Worker] executeInternal error:', error);
       if (!this.hasExited) {
         const errorMessage =
           error instanceof Error ? error.message : String(error);
@@ -199,35 +212,55 @@ class SandboxedWasmRuntime {
       }
     }
 
-    return {
+    const result = {
       exitCode: this.exitCode,
       stdout: this.vfs.getStdout(),
       stderr: this.vfs.getStderr(),
     };
+
+    console.log('[WASM Worker] execute() returning', {
+      exitCode: result.exitCode,
+      stdoutLength: result.stdout.length,
+      stderrLength: result.stderr.length,
+      stdoutPreview: result.stdout.substring(0, 200) + (result.stdout.length > 200 ? '...' : ''),
+      stderrPreview: result.stderr.substring(0, 200) + (result.stderr.length > 200 ? '...' : ''),
+    });
+
+    return result;
   }
 
   private async executeInternal(wasmBinary: ArrayBuffer): Promise<void> {
+    console.log('[WASM Worker] executeInternal: creating WASI imports...');
     const imports = this.createWasiImports();
 
+    console.log('[WASM Worker] executeInternal: compiling WASM module...');
     const module = await WebAssembly.compile(wasmBinary);
+    console.log('[WASM Worker] executeInternal: module compiled, instantiating...');
     const instance = await WebAssembly.instantiate(module, imports);
+    console.log('[WASM Worker] executeInternal: instance created, exports:', Object.keys(instance.exports));
 
     // WASI modules compiled with WASI SDK define and export their own memory.
     // We use the module's exported memory for all WASI operations.
     const exportedMemory = instance.exports.memory as WebAssembly.Memory | undefined;
     if (exportedMemory) {
       this.memory = exportedMemory;
+      console.log('[WASM Worker] executeInternal: using exported memory, buffer size:', exportedMemory.buffer.byteLength);
     } else {
       throw new Error('WASM module does not export memory');
     }
 
     const start = instance.exports._start as (() => void) | undefined;
     if (start) {
+      console.log('[WASM Worker] executeInternal: calling _start()...');
       try {
         start();
+        console.log('[WASM Worker] executeInternal: _start() returned normally');
       } catch (error) {
         if (!this.hasExited) {
+          console.error('[WASM Worker] executeInternal: _start() threw error:', error);
           throw error;
+        } else {
+          console.log('[WASM Worker] executeInternal: _start() exited via proc_exit');
         }
       }
     } else {
@@ -538,8 +571,14 @@ function sendResponse(response: WorkerResponse): void {
  */
 self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   const request = event.data;
+  console.log('[WASM Worker] received message:', {
+    type: request.type,
+    id: request.id,
+    argsPreview: request.type === 'execute' ? request.args : undefined,
+  });
 
   if (request.type !== 'execute') {
+    console.warn('[WASM Worker] unknown request type:', request.type);
     sendResponse({
       type: 'error',
       id: request.id,
@@ -549,18 +588,21 @@ self.onmessage = async (event: MessageEvent<WorkerRequest>) => {
   }
 
   try {
+    console.log('[WASM Worker] starting execution for request:', request.id);
     const result = await runtime.execute(
       request.wasmBinary,
       request.args,
       request.options
     );
 
+    console.log('[WASM Worker] execution complete, sending result for request:', request.id);
     sendResponse({
       type: 'result',
       id: request.id,
       result,
     });
   } catch (error) {
+    console.error('[WASM Worker] execution failed for request:', request.id, error);
     sendResponse({
       type: 'error',
       id: request.id,
