@@ -1502,8 +1502,30 @@ dialog.permission-dialog {
   border-radius: var(--radius-xl);
   box-shadow: var(--shadow-xl);
   max-width: 500px;
+  max-height: 80vh;
   width: 90%;
   margin: auto;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+/* Tool call container inside permission dialogs */
+.permission-dialog .tool-call {
+  flex-shrink: 1;
+  min-height: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
+  margin-bottom: var(--spacing-md);
+}
+
+/* Scrollable args section inside permission dialogs */
+.permission-dialog .tool-call-args {
+  max-height: 200px;
+  overflow-y: auto;
+  flex-shrink: 1;
+  margin: 0;
 }
 
 dialog.permission-dialog::backdrop {
@@ -1618,6 +1640,12 @@ dialog.permission-dialog[open] {
   flex: 1;
   margin: 0;
   animation: none;
+}
+
+/* Constrain args height in batch items */
+.batch-tool-item .tool-call-args {
+  max-height: 100px;
+  overflow-y: auto;
 }
 
 .batch-tool-checkbox {
