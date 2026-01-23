@@ -48,7 +48,7 @@ function createManifest(
 
 /**
  * Built-in tools registry.
- * All 40 tools organized by category.
+ * All 39 tools organized by category.
  */
 export const BUILTIN_TOOLS: BuiltinToolConfig[] = [
   // ==========================================================================
@@ -1014,12 +1014,12 @@ export const BUILTIN_TOOLS: BuiltinToolConfig[] = [
     ),
   },
   {
-    name: 'brotli',
+    name: 'zstd',
     category: 'compression',
-    wasmUrl: 'wasm-tools/binaries/brotli.wasm',
+    wasmUrl: 'wasm-tools/binaries/zstd.wasm',
     manifest: createManifest(
-      'brotli',
-      'Compress or decompress data using Brotli format. Reads from stdin, writes to stdout.',
+      'zstd',
+      'Compress or decompress data using Zstandard format. Reads from stdin, writes to stdout.',
       {
         type: 'object',
         properties: {
@@ -1028,10 +1028,10 @@ export const BUILTIN_TOOLS: BuiltinToolConfig[] = [
             description: 'Decompress instead of compress (-d)',
             default: false,
           },
-          quality: {
+          level: {
             type: 'number',
-            description: 'Compression quality 0-11 (default: 11)',
-            default: 11,
+            description: 'Compression level 1-19 (default: 3)',
+            default: 3,
           },
         },
         required: [],
@@ -1039,6 +1039,7 @@ export const BUILTIN_TOOLS: BuiltinToolConfig[] = [
       { category: 'compression', argStyle: 'cli', timeout: 60000 }
     ),
   },
+
   // ==========================================================================
   // Database Tools (1 tool)
   // ==========================================================================
