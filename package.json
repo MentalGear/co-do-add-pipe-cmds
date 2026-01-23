@@ -19,7 +19,10 @@
     "test:visual:update": "playwright test tests/visual --update-snapshots",
     "test:headed": "playwright test --headed",
     "test:debug": "playwright test --debug",
-    "test:report": "playwright show-report"
+    "test:report": "playwright show-report",
+    "wasm:build": "bash wasm-tools/build.sh",
+    "wasm:build:native": "bash wasm-tools/build.sh --native-only",
+    "wasm:help": "bash wasm-tools/build.sh --help"
   },
   "keywords": [
     "file-system-access",
@@ -32,6 +35,7 @@
     "@axe-core/playwright": "^4.11.0",
     "@playwright/test": "^1.57.0",
     "@resvg/resvg-js": "^2.6.2",
+    "@types/jszip": "^3.4.0",
     "@types/node": "^22.10.5",
     "typescript": "^5.7.2",
     "vite": "^6.0.7"
@@ -41,6 +45,7 @@
     "@ai-sdk/google": "^3.0.10",
     "@ai-sdk/openai": "^3.0.12",
     "ai": "^6.0.39",
+    "jszip": "^3.10.1",
     "marked": "^17.0.1",
     "zod": "^3.24.1"
   }
