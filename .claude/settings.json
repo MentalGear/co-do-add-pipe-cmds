@@ -17,6 +17,18 @@
     "github@claude-plugins-official": true
   },
   "permissions": {
-    "allow": ["Bash(git add:*)", "Bash(git commit:*)", "Bash(git push:*)"]
+    "allow": [
+      "Bash(git add:*)",
+      "Bash(git commit:*)",
+      "Bash(git push:*)",
+      "Bash(./build.sh:*)",
+      "Bash(unzip:*)",
+      "Bash(npm run type-check:*)",
+      "Bash(ln:*)",
+      "Bash(npm run build:*)",
+      "Bash(python3:*)",
+      "Bash(git rev-parse:*)",
+      "Bash(gh pr:*)"
+    ]
   }
 }
