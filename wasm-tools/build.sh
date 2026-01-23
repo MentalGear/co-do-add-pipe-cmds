@@ -823,7 +823,7 @@ for wasm_file in "$BIN_DIR"/*.wasm; do
     if [ -f "$wasm_file" ]; then
         tool_name=$(basename "$wasm_file" .wasm)
         if create_zip_package "$tool_name"; then
-            ((PACKAGED_COUNT++))
+            ((++PACKAGED_COUNT))
         fi
     fi
 done
