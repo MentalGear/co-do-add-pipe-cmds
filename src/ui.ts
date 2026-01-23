@@ -484,6 +484,8 @@ export class UIManager {
       const loadedCount = await wasmToolManager.loadBuiltinTools();
       if (loadedCount > 0) {
         console.log(`Loaded ${loadedCount} built-in WASM tools`);
+        // Re-render the tools list in case the modal is already open
+        this.renderWasmToolsList();
       }
 
       console.log('WASM tools initialized');
