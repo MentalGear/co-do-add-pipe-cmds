@@ -14,6 +14,7 @@ import { wasmToolManager, setWasmPermissionCallback } from './wasm-tools';
 import type { StoredWasmTool } from './wasm-tools/types';
 import { toastManager, showToast } from './toasts';
 import { ProviderConfig, storageManager, Conversation, StoredMessage, StoredToolActivity } from './storage';
+import { setProviderCookie } from './provider-registry';
 import { createMarkdownIframe, updateMarkdownIframe, checkContentOverflow } from './markdown';
 import { withViewTransition, generateUniqueTransitionName } from './viewTransitions';
 import { ModelMessage, Tool } from 'ai';
@@ -191,8 +192,8 @@ export class UIManager {
       wasmToolManager.cancelAllExecutions();
     });
 
-    // Load provider configurations (async)
-    this.loadProviderConfigurations();
+    // Load provider configurations (async, skip reload on initial load)
+    this.loadProviderConfigurations(true);
 
     // Load conversations (async)
     this.loadConversations();
@@ -348,7 +349,7 @@ export class UIManager {
     this.elements.infoBtn.addEventListener('click', () => this.openModal('info'));
     this.elements.settingsBtn.addEventListener('click', () => {
       this.openModal('settings');
-      this.loadProviderConfigurations();
+      this.loadProviderConfigurations(true); // Skip reload, just displaying
     });
     this.elements.toolsBtn.addEventListener('click', () => this.openModal('tools'));
 
@@ -1174,9 +1175,18 @@ export class UIManager {
   /**
    * Load and display provider configurations
    */
-  private async loadProviderConfigurations(): Promise<void> {
+  private async loadProviderConfigurations(isInitialLoad = false): Promise<void> {
     try {
       const configs = await preferencesManager.getAllProviderConfigs();
+
+      // Sync the provider cookie with the current default so the server
+      // can set the correct per-provider CSP on the next page load.
+      // On initial load, skip the reload check since CSP is already set.
+      // On user-initiated changes, reload if provider changed to get new CSP.
+      const defaultConfig = configs.find(c => c.isDefault);
+      if (defaultConfig) {
+        setProviderCookie(defaultConfig.provider, isInitialLoad);
+      }
 
       if (configs.length === 0) {
         this.elements.providersList.innerHTML = `
@@ -2672,8 +2682,10 @@ export class UIManager {
       this.elements.voiceBtn.classList.remove('recording', 'error');
       this.elements.voiceBtn.setAttribute('aria-label', 'Voice input');
       this.elements.voiceBtn.setAttribute('title', 'Voice input');
-    } catch (error) {
-      console.error('Failed to stop recognition:', error);
+    } catch (err) {
+      console.error('Failed to stop voice recognition:', err);
     }
   }
 }
+
+// End of UIManager class
