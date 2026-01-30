@@ -9,7 +9,8 @@ import {
 } from './fileSystem';
 import { preferencesManager, ToolName } from './preferences';
 import { aiManager, AVAILABLE_MODELS } from './ai';
-import { fileTools, setPermissionCallback } from './tools';
+import { fileTools, setPermissionCallback, pipeTool } from './tools';
+import { parsePipeCommand, formatPipeDescription } from './pipeParser';
 import { toolResultCache } from './toolResultCache';
 import { wasmToolManager, setWasmPermissionCallback } from './wasm-tools';
 import type { StoredWasmTool } from './wasm-tools/types';
@@ -1764,8 +1765,12 @@ export class UIManager {
       // Get all tools (built-in + WASM)
       const allTools = this.getAllTools();
 
+      // Transform pipe command syntax (e.g., "cat file.txt | grep pattern") into
+      // an instruction for the AI to use the pipe tool
+      const aiPrompt = this.transformPipeCommand(prompt);
+
       await aiManager.streamCompletion(
-        prompt,
+        aiPrompt,
         messagesForContext,
         allTools,
         // On text delta
@@ -1880,6 +1885,28 @@ export class UIManager {
       this.elements.sendBtn.disabled = false;
       this.elements.promptInput.focus();
     }
+  }
+
+  /**
+   * Transform pipe command syntax into a prompt for the AI to use the pipe tool
+   * When the user types "cat file.txt | grep pattern | sort", transform it to
+   * an instruction for the AI to call the pipe tool with the parsed commands.
+   */
+  private transformPipeCommand(prompt: string): string {
+    const parseResult = parsePipeCommand(prompt);
+
+    if (!parseResult.isPipeCommand || parseResult.commands.length === 0) {
+      return prompt;
+    }
+
+    if (parseResult.error) {
+      // Return original prompt with error note, let AI handle it
+      return `${prompt}\n\nNote: There was an error parsing this as a pipe command: ${parseResult.error}`;
+    }
+
+    // Transform into an explicit instruction for the AI to use the pipe tool
+    const commandsJson = JSON.stringify(parseResult.commands, null, 2);
+    return `Execute this pipe command using the pipe tool:\n\n\`\`\`\n${prompt}\n\`\`\`\n\nParsed commands:\n\`\`\`json\n${commandsJson}\n\`\`\`\n\nPlease call the pipe tool with these commands.`;
   }
 
   /**
