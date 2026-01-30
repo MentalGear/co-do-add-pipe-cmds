@@ -298,7 +298,7 @@ export class TerminalManager {
   }
 
   /**
-   * Execute a command
+   * Execute a command (or pipe chain)
    */
   private async executeCommand(input: string): Promise<void> {
     if (!input) {
@@ -310,31 +310,47 @@ export class TerminalManager {
     this.commandHistory.push(input);
     this.historyIndex = -1;
 
-    // Parse command and arguments
-    const parts = this.parseCommand(input);
-    const command = parts[0]?.toLowerCase() || '';
-    const args = parts.slice(1);
-
-    // Debug: log command input
-    if (this.debugMode && command !== 'debug') {
-      this.logDebugInput(command, args);
-    }
+    // Parse pipe chain
+    const pipeCommands = this.parsePipeChain(input);
 
     try {
-      const result = await this.runCommand(command, args);
+      let stdin: string | undefined;
 
-      // Debug: log command output
-      if (this.debugMode && command !== 'debug') {
-        this.logDebugOutput(result);
+      for (let i = 0; i < pipeCommands.length; i++) {
+        const cmdInput = pipeCommands[i]!;
+        const parts = this.parseCommand(cmdInput);
+        const command = parts[0]?.toLowerCase() || '';
+        const args = parts.slice(1);
+
+        // Debug: log command input
+        if (this.debugMode && command !== 'debug') {
+          this.logDebugInput(command, args, stdin, i > 0);
+        }
+
+        const result = await this.runCommand(command, args, stdin);
+
+        // Debug: log command output
+        if (this.debugMode && command !== 'debug') {
+          this.logDebugOutput(result);
+        }
+
+        if (!result.success) {
+          // Pipeline failed
+          if (result.error) {
+            this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${result.error}`);
+          }
+          this.prompt();
+          return;
+        }
+
+        // Pass output to next command as stdin
+        stdin = result.output;
       }
 
-      if (result.output) {
+      // Output final result
+      if (stdin) {
         // Convert \n to \r\n for proper xterm line breaks
-        this.terminal.writeln(result.output.replace(/\n/g, '\r\n'));
-      }
-
-      if (result.error) {
-        this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${result.error}`);
+        this.terminal.writeln(stdin.replace(/\n/g, '\r\n'));
       }
     } catch (error) {
       if (this.debugMode) {
@@ -344,6 +360,42 @@ export class TerminalManager {
     }
 
     this.prompt();
+  }
+
+  /**
+   * Parse a pipe chain into individual commands
+   * Handles quoted strings that may contain |
+   */
+  private parsePipeChain(input: string): string[] {
+    const commands: string[] = [];
+    let current = '';
+    let inQuote = false;
+    let quoteChar = '';
+
+    for (let i = 0; i < input.length; i++) {
+      const char = input[i]!;
+
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = true;
+        quoteChar = char;
+        current += char;
+      } else if (char === quoteChar && inQuote) {
+        inQuote = false;
+        quoteChar = '';
+        current += char;
+      } else if (char === '|' && !inQuote) {
+        commands.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+
+    if (current.trim()) {
+      commands.push(current.trim());
+    }
+
+    return commands;
   }
 
   /**
@@ -406,8 +458,9 @@ export class TerminalManager {
 
   /**
    * Run a command and return result
+   * @param stdin - Optional input from previous command in pipe chain
    */
-  private async runCommand(command: string, args: string[]): Promise<CommandResult> {
+  private async runCommand(command: string, args: string[], stdin?: string): Promise<CommandResult> {
     // Resolve command aliases (tool names -> Unix commands)
     const resolvedCommand = COMMAND_ALIASES[command] || command;
 
@@ -419,7 +472,7 @@ export class TerminalManager {
         return this.cmdLs(args[0]);
 
       case 'cat':
-        return this.cmdCat(args[0]);
+        return this.cmdCat(args[0], stdin);
 
       case 'mkdir':
         return this.cmdMkdir(args[0]);
@@ -453,25 +506,25 @@ export class TerminalManager {
         return this.cmdTree(args[0]);
 
       case 'head':
-        return this.cmdHead(args[0], parseInt(args[1] || '10') || 10);
+        return this.cmdHead(args[0], parseInt(args[1] || '10') || 10, stdin);
 
       case 'tail':
-        return this.cmdTail(args[0], parseInt(args[1] || '10') || 10);
+        return this.cmdTail(args[0], parseInt(args[1] || '10') || 10, stdin);
 
       case 'grep':
-        return this.cmdGrep(args[0], args[1]);
+        return this.cmdGrep(args[0], args[1], stdin);
 
       case 'wc':
-        return this.cmdWc(args[0]);
+        return this.cmdWc(args[0], stdin);
 
       case 'diff':
         return this.cmdDiff(args[0], args[1]);
 
       case 'sort':
-        return this.cmdSort(args[0]);
+        return this.cmdSort(args[0], stdin);
 
       case 'uniq':
-        return this.cmdUniq(args[0]);
+        return this.cmdUniq(args[0], stdin);
 
       case 'echo':
         return { success: true, output: args.join(' ') };
@@ -512,6 +565,12 @@ export class TerminalManager {
       lines.push(`  \x1b[1;32m${cmd.padEnd(12)}\x1b[0m ${desc}`);
     }
 
+    lines.push('');
+    lines.push('\x1b[1;33mPipe Support:\x1b[0m');
+    lines.push('  Commands can be chained with | (pipe operator)');
+    lines.push('  Example: \x1b[1;32mcat file.txt | grep pattern | head 5\x1b[0m');
+    lines.push('  Pipe-aware: cat, grep, head, tail, sort, uniq, wc');
+
     return { success: true, output: lines.join('\n') };
   }
 
@@ -542,7 +601,12 @@ export class TerminalManager {
     return { success: true, output: lines.join('  ') };
   }
 
-  private async cmdCat(path?: string): Promise<CommandResult> {
+  private async cmdCat(path?: string, stdin?: string): Promise<CommandResult> {
+    // If stdin provided and no path, just pass through stdin
+    if (stdin !== undefined && !path) {
+      return { success: true, output: stdin };
+    }
+
     if (!path) {
       return { success: false, output: '', error: 'Usage: cat <path>' };
     }
@@ -715,65 +779,110 @@ export class TerminalManager {
     return { success: true, output: lines.join('\n') };
   }
 
-  private async cmdHead(path?: string, lines: number = 10): Promise<CommandResult> {
-    if (!path) {
-      return { success: false, output: '', error: 'Usage: head <path> [lines]' };
+  private async cmdHead(path?: string, lines: number = 10, stdin?: string): Promise<CommandResult> {
+    let content: string;
+
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+      // If path is provided, treat it as line count
+      if (path) {
+        const parsed = parseInt(path);
+        if (!isNaN(parsed)) {
+          lines = parsed;
+        }
+      }
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: head <path> [lines]' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
     }
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
     const allLines = content.split('\n');
     const headLines = allLines.slice(0, lines);
 
     return { success: true, output: headLines.join('\n') };
   }
 
-  private async cmdTail(path?: string, lines: number = 10): Promise<CommandResult> {
-    if (!path) {
-      return { success: false, output: '', error: 'Usage: tail <path> [lines]' };
+  private async cmdTail(path?: string, lines: number = 10, stdin?: string): Promise<CommandResult> {
+    let content: string;
+
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+      // If path is provided, treat it as line count
+      if (path) {
+        const parsed = parseInt(path);
+        if (!isNaN(parsed)) {
+          lines = parsed;
+        }
+      }
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: tail <path> [lines]' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
     }
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
     const allLines = content.split('\n');
     const tailLines = allLines.slice(-lines);
 
     return { success: true, output: tailLines.join('\n') };
   }
 
-  private async cmdGrep(pattern?: string, path?: string): Promise<CommandResult> {
-    if (!pattern || !path) {
-      return { success: false, output: '', error: 'Usage: grep <pattern> <path>' };
+  private async cmdGrep(pattern?: string, path?: string, stdin?: string): Promise<CommandResult> {
+    if (!pattern) {
+      return { success: false, output: '', error: 'Usage: grep <pattern> [path]' };
     }
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
+    let content: string;
+
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: grep <pattern> <path>' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
+    }
+
     const regex = new RegExp(pattern, 'gi');
     const lines = content.split('\n');
 
     const matches = lines
-      .map((line, i) => ({ line, num: i + 1 }))
-      .filter(({ line }) => regex.test(line))
-      .map(({ line, num }) => {
+      .filter(line => regex.test(line))
+      .map(line => {
         // Highlight matches
-        const highlighted = line.replace(regex, match => `\x1b[1;31m${match}\x1b[0m`);
-        return `\x1b[1;33m${num}:\x1b[0m ${highlighted}`;
+        return line.replace(regex, match => `\x1b[1;31m${match}\x1b[0m`);
       });
 
     if (matches.length === 0) {
-      return { success: true, output: '\x1b[2m(no matches)\x1b[0m' };
+      return { success: true, output: '' };
     }
 
     return { success: true, output: matches.join('\n') };
   }
 
-  private async cmdWc(path?: string): Promise<CommandResult> {
-    if (!path) {
-      return { success: false, output: '', error: 'Usage: wc <path>' };
-    }
+  private async cmdWc(path?: string, stdin?: string): Promise<CommandResult> {
+    let content: string;
+    let label = path || '';
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+      label = '';
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: wc <path>' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
+    }
 
     const lines = (content.match(/\n/g) || []).length;
     const words = content.split(/\s+/).filter(w => w.length > 0).length;
@@ -781,7 +890,7 @@ export class TerminalManager {
 
     return {
       success: true,
-      output: `  ${lines.toString().padStart(6)} ${words.toString().padStart(6)} ${chars.toString().padStart(6)} ${path}`,
+      output: `  ${lines.toString().padStart(6)} ${words.toString().padStart(6)} ${chars.toString().padStart(6)}${label ? ' ' + label : ''}`,
     };
   }
 
@@ -828,13 +937,19 @@ export class TerminalManager {
     }
   }
 
-  private async cmdSort(path?: string): Promise<CommandResult> {
-    if (!path) {
-      return { success: false, output: '', error: 'Usage: sort <path>' };
-    }
+  private async cmdSort(path?: string, stdin?: string): Promise<CommandResult> {
+    let content: string;
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: sort <path>' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
+    }
 
     const lines = content.split('\n');
     const sorted = lines.sort((a, b) => a.localeCompare(b));
@@ -842,13 +957,19 @@ export class TerminalManager {
     return { success: true, output: sorted.join('\n') };
   }
 
-  private async cmdUniq(path?: string): Promise<CommandResult> {
-    if (!path) {
-      return { success: false, output: '', error: 'Usage: uniq <path>' };
-    }
+  private async cmdUniq(path?: string, stdin?: string): Promise<CommandResult> {
+    let content: string;
 
-    const resolvedPath = this.resolvePath(path);
-    const content = await opfsFileSystem.readFile(resolvedPath);
+    if (stdin !== undefined) {
+      // Use stdin if provided
+      content = stdin;
+    } else {
+      if (!path) {
+        return { success: false, output: '', error: 'Usage: uniq <path>' };
+      }
+      const resolvedPath = this.resolvePath(path);
+      content = await opfsFileSystem.readFile(resolvedPath);
+    }
 
     const lines = content.split('\n');
     const unique = lines.filter((line, index, arr) => index === 0 || line !== arr[index - 1]);
@@ -963,16 +1084,22 @@ export class TerminalManager {
   /**
    * Log debug input for command execution
    */
-  private logDebugInput(command: string, args: string[]): void {
+  private logDebugInput(command: string, args: string[], stdin?: string, isPiped?: boolean): void {
     const resolvedCommand = COMMAND_ALIASES[command] || command;
     const toolName = Object.entries(COMMAND_ALIASES).find(([, v]) => v === resolvedCommand)?.[0] || resolvedCommand;
 
     this.terminal.writeln('');
     this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Input ──────────────────\x1b[0m');
-    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}`);
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}${isPiped ? ' \x1b[33m(piped)\x1b[0m' : ''}`);
 
     if (args.length > 0) {
       this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mArgs:\x1b[0m ${JSON.stringify(args)}`);
+    }
+
+    if (stdin !== undefined) {
+      const lines = stdin.split('\n');
+      const preview = lines.length > 3 ? lines.slice(0, 3).join('\\n') + `... (${lines.length} lines)` : stdin.replace(/\n/g, '\\n');
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mStdin:\x1b[0m ${preview.slice(0, 60)}${preview.length > 60 ? '...' : ''}`);
     }
 
     this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
