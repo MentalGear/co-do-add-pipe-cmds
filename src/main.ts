@@ -5,6 +5,8 @@
 import './styles.css';
 import { UIManager } from './ui';
 import { preferencesManager } from './preferences';
+import { terminalManager } from './terminal';
+import { opfsFileSystem } from './opfsFileSystem';
 
 // Version checking constants
 const VERSION_STORAGE_KEY = 'co-do-app-version';
@@ -133,13 +135,13 @@ async function checkForUpdates(): Promise<void> {
 
 // Initialize the application
 async function init() {
-  console.log('Co-do - AI File System Manager');
+  console.log('Co-do - AI File System Manager (OPFS Mode)');
   console.log('Initializing application...');
 
-  // Check for File System Access API support
-  if (!('showDirectoryPicker' in window)) {
+  // Check for OPFS support
+  if (!('storage' in navigator) || !('getDirectory' in navigator.storage)) {
     alert(
-      'Your browser does not support the File System Access API.\n\n' +
+      'Your browser does not support the Origin Private File System.\n\n' +
         'Please use Chrome 86+, Edge 86+, or another Chromium-based browser.\n\n' +
         'For the best experience, use the latest version of Chrome.'
     );
@@ -154,21 +156,35 @@ async function init() {
     console.error('Failed to initialize preferences manager:', error);
   }
 
+  // Initialize OPFS
+  try {
+    await opfsFileSystem.init();
+    console.log('OPFS initialized');
+
+    // Update storage info display
+    updateStorageInfo();
+  } catch (error) {
+    console.error('Failed to initialize OPFS:', error);
+    alert('Failed to initialize the file system. Please refresh the page.');
+    return;
+  }
+
+  // Initialize terminal
+  const terminalContainer = document.getElementById('terminal-container');
+  if (terminalContainer) {
+    try {
+      await terminalManager.mount(terminalContainer);
+      console.log('Terminal initialized');
+    } catch (error) {
+      console.error('Failed to initialize terminal:', error);
+    }
+  }
+
   // Initialize UI
   new UIManager();
 
-  // Handle PWA shortcut actions
-  const urlParams = new URLSearchParams(window.location.search);
-  if (urlParams.get('action') === 'select-folder') {
-    // Trigger folder selection when launched via PWA shortcut
-    // Use setTimeout to ensure UI is fully initialized
-    setTimeout(() => {
-      const selectFolderBtn = document.getElementById('select-folder-btn');
-      if (selectFolderBtn) {
-        selectFolderBtn.click();
-      }
-    }, 100);
-  }
+  // Set up import buttons
+  setupImportButtons();
 
   // Register Service Worker for PWA support (caching only)
   if ('serviceWorker' in navigator) {
@@ -199,6 +215,83 @@ async function init() {
   checkForUpdates();
 
   console.log('Application initialized successfully');
+}
+
+/**
+ * Update storage info display
+ */
+async function updateStorageInfo(): Promise<void> {
+  const storageInfoEl = document.getElementById('storage-info');
+  if (!storageInfoEl) return;
+
+  const info = await opfsFileSystem.getStorageInfo();
+  if (info) {
+    const usedMB = (info.used / 1024 / 1024).toFixed(1);
+    const quotaMB = (info.quota / 1024 / 1024).toFixed(0);
+    storageInfoEl.textContent = `Storage: ${usedMB} MB / ${quotaMB} MB`;
+  }
+}
+
+/**
+ * Set up import buttons
+ */
+function setupImportButtons(): void {
+  const importFilesBtn = document.getElementById('import-files-btn');
+  const importFolderBtn = document.getElementById('import-folder-btn');
+
+  // Import files button
+  if (importFilesBtn) {
+    importFilesBtn.addEventListener('click', async () => {
+      const input = document.createElement('input');
+      input.type = 'file';
+      input.multiple = true;
+
+      input.onchange = async () => {
+        if (input.files && input.files.length > 0) {
+          try {
+            const entries = await opfsFileSystem.importFiles(input.files);
+            console.log(`Imported ${entries.length} file(s)`);
+            terminalManager.writeln(`\n\x1b[1;32mImported ${entries.length} file(s)\x1b[0m`);
+            for (const entry of entries) {
+              terminalManager.writeln(`  ${entry.path}`);
+            }
+            terminalManager.writeln('');
+            updateStorageInfo();
+          } catch (error) {
+            console.error('Import failed:', error);
+            terminalManager.writeln(`\n\x1b[1;31mImport failed: ${(error as Error).message}\x1b[0m\n`);
+          }
+        }
+      };
+
+      input.click();
+    });
+  }
+
+  // Import folder button
+  if (importFolderBtn) {
+    importFolderBtn.addEventListener('click', async () => {
+      try {
+        // Use showDirectoryPicker for folder import
+        if (!('showDirectoryPicker' in window)) {
+          terminalManager.writeln('\n\x1b[1;31mFolder import not supported in this browser\x1b[0m\n');
+          return;
+        }
+
+        const dirHandle = await window.showDirectoryPicker({ mode: 'read' });
+        const entries = await opfsFileSystem.importDirectory(dirHandle);
+
+        console.log(`Imported ${entries.length} item(s) from folder`);
+        terminalManager.writeln(`\n\x1b[1;32mImported ${entries.length} item(s) from "${dirHandle.name}"\x1b[0m`);
+        updateStorageInfo();
+      } catch (error) {
+        if ((error as Error).name !== 'AbortError') {
+          console.error('Folder import failed:', error);
+          terminalManager.writeln(`\n\x1b[1;31mFolder import failed: ${(error as Error).message}\x1b[0m\n`);
+        }
+      }
+    });
+  }
 }
 
 // Start the application when DOM is ready

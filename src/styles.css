@@ -2868,3 +2868,81 @@ dialog.permission-dialog[open] {
     animation: none !important;
   }
 }
+
+/* ============================================
+   OPFS Terminal Styles
+   ============================================ */
+
+/* OPFS actions */
+.opfs-actions {
+  display: flex;
+  flex-direction: column;
+  gap: var(--spacing-sm);
+  margin-bottom: var(--spacing-md);
+}
+
+.opfs-actions .sidebar-btn {
+  justify-content: flex-start;
+  gap: var(--spacing-sm);
+}
+
+/* Storage info */
+.storage-info {
+  font-size: 0.75rem;
+  color: var(--color-text-tertiary);
+  padding: var(--spacing-xs) 0;
+}
+
+/* Sidebar section that grows to fill available space */
+.sidebar-section-grow {
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Terminal container */
+.terminal-container {
+  flex: 1;
+  min-height: 200px;
+  background: #1e1e2e;
+  border-radius: var(--radius-md);
+  overflow: hidden;
+  position: relative;
+}
+
+.terminal-container .xterm {
+  height: 100%;
+  padding: var(--spacing-sm);
+}
+
+.terminal-container .xterm-viewport {
+  overflow-y: auto !important;
+}
+
+.terminal-container .xterm-screen {
+  height: 100% !important;
+}
+
+/* Make sidebar use flex layout for terminal */
+.sidebar {
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar .sidebar-section:not(.sidebar-section-grow) {
+  flex-shrink: 0;
+}
+
+/* Mobile adjustments for terminal */
+@media (max-width: 767px) {
+  .terminal-container {
+    min-height: 150px;
+    max-height: 300px;
+  }
+
+  .sidebar-section-grow {
+    max-height: 350px;
+  }
+}

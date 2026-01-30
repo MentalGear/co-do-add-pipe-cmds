@@ -75,19 +75,31 @@
       <!-- Sidebar for context -->
       <aside class="sidebar" id="sidebar">
         <div class="sidebar-section">
-          <h3 class="sidebar-title">Workspace</h3>
-          <button id="select-folder-btn" class="sidebar-btn">
-            <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
-              <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
-            </svg>
-            Select Folder
-          </button>
-          <div id="folder-info" class="folder-info"></div>
+          <h3 class="sidebar-title">OPFS Sandbox</h3>
+          <div class="opfs-actions">
+            <button id="import-files-btn" class="sidebar-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"></path>
+                <polyline points="17 8 12 3 7 8"></polyline>
+                <line x1="12" y1="3" x2="12" y2="15"></line>
+              </svg>
+              Import Files
+            </button>
+            <button id="import-folder-btn" class="sidebar-btn">
+              <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                <path d="M22 19a2 2 0 0 1-2 2H4a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h5l2 3h9a2 2 0 0 1 2 2z"></path>
+                <polyline points="12 11 12 17"></polyline>
+                <polyline points="9 14 12 11 15 14"></polyline>
+              </svg>
+              Import Folder
+            </button>
+          </div>
+          <div id="storage-info" class="storage-info"></div>
         </div>
 
-        <div class="sidebar-section">
-          <h3 class="sidebar-title">Files</h3>
-          <div id="file-list" class="file-list"></div>
+        <div class="sidebar-section sidebar-section-grow">
+          <h3 class="sidebar-title">Terminal</h3>
+          <div id="terminal-container" class="terminal-container"></div>
         </div>
       </aside>
 
