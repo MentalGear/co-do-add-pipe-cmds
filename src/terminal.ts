@@ -329,7 +329,8 @@ export class TerminalManager {
       }
 
       if (result.output) {
-        this.terminal.writeln(result.output);
+        // Convert \n to \r\n for proper xterm line breaks
+        this.terminal.writeln(result.output.replace(/\n/g, '\r\n'));
       }
 
       if (result.error) {
