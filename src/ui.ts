@@ -462,6 +462,10 @@ export class UIManager {
     const minWidth = 200;
     const maxWidth = 600;
 
+    const setSidebarWidth = (width: number) => {
+      document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
+    };
+
     const startResize = (e: MouseEvent) => {
       isResizing = true;
       startX = e.clientX;
@@ -476,7 +480,7 @@ export class UIManager {
 
       const diff = e.clientX - startX;
       const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + diff));
-      sidebar.style.width = `${newWidth}px`;
+      setSidebarWidth(newWidth);
     };
 
     const stopResize = () => {
@@ -496,7 +500,7 @@ export class UIManager {
     if (savedWidth) {
       const width = parseInt(savedWidth, 10);
       if (width >= minWidth && width <= maxWidth) {
-        sidebar.style.width = `${width}px`;
+        setSidebarWidth(width);
       }
     }
 

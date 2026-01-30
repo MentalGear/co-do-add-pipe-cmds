@@ -83,6 +83,7 @@ export class TerminalManager {
   private fitAddon: FitAddon;
   private resizeObserver: ResizeObserver | null = null;
   private currentLine: string = '';
+  private cursorPosition: number = 0;
   private commandHistory: string[] = [];
   private historyIndex: number = -1;
   private currentDirectory: string = '';
@@ -180,14 +181,19 @@ export class TerminalManager {
       this.terminal.writeln('');
       this.executeCommand(this.currentLine.trim());
       this.currentLine = '';
+      this.cursorPosition = 0;
       return;
     }
 
     if (data === '\x7f') {
-      // Backspace
-      if (this.currentLine.length > 0) {
-        this.currentLine = this.currentLine.slice(0, -1);
-        this.terminal.write('\b \b');
+      // Backspace - delete character before cursor
+      if (this.cursorPosition > 0) {
+        const before = this.currentLine.slice(0, this.cursorPosition - 1);
+        const after = this.currentLine.slice(this.cursorPosition);
+        this.currentLine = before + after;
+        this.cursorPosition--;
+        // Move cursor back, rewrite rest of line, clear extra char, restore cursor
+        this.terminal.write('\b' + after + ' ' + '\x1b[' + (after.length + 1) + 'D');
       }
       return;
     }
@@ -213,10 +219,47 @@ export class TerminalManager {
       return;
     }
 
+    if (data === '\x1b[C') {
+      // Right arrow - move cursor right
+      if (this.cursorPosition < this.currentLine.length) {
+        this.cursorPosition++;
+        this.terminal.write('\x1b[C');
+      }
+      return;
+    }
+
+    if (data === '\x1b[D') {
+      // Left arrow - move cursor left
+      if (this.cursorPosition > 0) {
+        this.cursorPosition--;
+        this.terminal.write('\x1b[D');
+      }
+      return;
+    }
+
+    if (data === '\x01') {
+      // Ctrl+A - move to beginning of line
+      if (this.cursorPosition > 0) {
+        this.terminal.write('\x1b[' + this.cursorPosition + 'D');
+        this.cursorPosition = 0;
+      }
+      return;
+    }
+
+    if (data === '\x05') {
+      // Ctrl+E - move to end of line
+      if (this.cursorPosition < this.currentLine.length) {
+        this.terminal.write('\x1b[' + (this.currentLine.length - this.cursorPosition) + 'C');
+        this.cursorPosition = this.currentLine.length;
+      }
+      return;
+    }
+
     if (data === '\x03') {
       // Ctrl+C
       this.terminal.writeln('^C');
       this.currentLine = '';
+      this.cursorPosition = 0;
       this.prompt();
       return;
     }
@@ -228,10 +271,17 @@ export class TerminalManager {
       return;
     }
 
-    // Regular character input
+    // Regular character input - insert at cursor position
     if (data >= ' ' && data <= '~') {
-      this.currentLine += data;
-      this.terminal.write(data);
+      const before = this.currentLine.slice(0, this.cursorPosition);
+      const after = this.currentLine.slice(this.cursorPosition);
+      this.currentLine = before + data + after;
+      this.cursorPosition++;
+      // Write character and rest of line, then move cursor back
+      this.terminal.write(data + after);
+      if (after.length > 0) {
+        this.terminal.write('\x1b[' + after.length + 'D');
+      }
     }
   }
 
@@ -242,6 +292,7 @@ export class TerminalManager {
     // Clear current line
     this.terminal.write('\x1b[2K\r');
     this.prompt();
+    this.cursorPosition = newLine.length;
     this.currentLine = newLine;
     this.terminal.write(newLine);
   }
@@ -264,8 +315,18 @@ export class TerminalManager {
     const command = parts[0]?.toLowerCase() || '';
     const args = parts.slice(1);
 
+    // Debug: log command input
+    if (this.debugMode && command !== 'debug') {
+      this.logDebugInput(command, args);
+    }
+
     try {
       const result = await this.runCommand(command, args);
+
+      // Debug: log command output
+      if (this.debugMode && command !== 'debug') {
+        this.logDebugOutput(result);
+      }
 
       if (result.output) {
         this.terminal.writeln(result.output);
@@ -275,6 +336,9 @@ export class TerminalManager {
         this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${result.error}`);
       }
     } catch (error) {
+      if (this.debugMode) {
+        this.logDebugOutput({ success: false, output: '', error: (error as Error).message });
+      }
       this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${(error as Error).message}`);
     }
 
@@ -895,23 +959,49 @@ export class TerminalManager {
   /**
    * Log debug output for tool calls
    */
-  logToolCall(toolName: string, input: unknown, output: unknown): void {
-    if (!this.debugMode) return;
+  /**
+   * Log debug input for command execution
+   */
+  private logDebugInput(command: string, args: string[]): void {
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+    const toolName = Object.entries(COMMAND_ALIASES).find(([, v]) => v === resolvedCommand)?.[0] || resolvedCommand;
 
     this.terminal.writeln('');
-    this.terminal.writeln('\x1b[1;35m┌─ Tool Call ─────────────────────────────\x1b[0m');
-    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mTool:\x1b[0m ${toolName}`);
-    this.terminal.writeln('\x1b[1;35m│\x1b[0m \x1b[1;36mInput:\x1b[0m');
+    this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Input ──────────────────\x1b[0m');
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}`);
 
-    const inputStr = JSON.stringify(input, null, 2);
-    for (const line of inputStr.split('\n')) {
-      this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+    if (args.length > 0) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mArgs:\x1b[0m ${JSON.stringify(args)}`);
     }
 
-    this.terminal.writeln('\x1b[1;35m│\x1b[0m \x1b[1;36mOutput:\x1b[0m');
-    const outputStr = JSON.stringify(output, null, 2);
-    for (const line of outputStr.split('\n')) {
-      this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+    this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
+  }
+
+  /**
+   * Log debug output for command execution
+   */
+  private logDebugOutput(result: CommandResult): void {
+    this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Output ─────────────────\x1b[0m');
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mSuccess:\x1b[0m ${result.success ? '\x1b[32mtrue\x1b[0m' : '\x1b[31mfalse\x1b[0m'}`);
+
+    if (result.error) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;31mError:\x1b[0m ${result.error}`);
+    }
+
+    if (result.output) {
+      const lines = result.output.split('\n');
+      const maxLines = 10;
+      const truncated = lines.length > maxLines;
+      const displayLines = truncated ? lines.slice(0, maxLines) : lines;
+
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mOutput:\x1b[0m (${lines.length} lines)`);
+      for (const line of displayLines) {
+        // Escape ANSI codes in the output for display
+        this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+      }
+      if (truncated) {
+        this.terminal.writeln(`\x1b[1;35m│\x1b[0m   \x1b[2m... ${lines.length - maxLines} more lines\x1b[0m`);
+      }
     }
 
     this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
