@@ -588,32 +588,64 @@ export class TerminalManager {
     }
 
     // Build tree structure
-    const lines: string[] = [resolvedPath || '/'];
+    interface TreeNode {
+      name: string;
+      kind: 'file' | 'directory';
+      children: Map<string, TreeNode>;
+    }
 
-    // Sort entries by path
-    const sorted = filtered.sort((a, b) => a.path.localeCompare(b.path));
+    const root: TreeNode = { name: '', kind: 'directory', children: new Map() };
 
-    for (let i = 0; i < sorted.length; i++) {
-      const entry = sorted[i]!;
+    for (const entry of filtered) {
       const relativePath = resolvedPath
-        ? entry.path.slice(resolvedPath.length + 1)
+        ? entry.path.slice(resolvedPath.length + 1) || entry.name
         : entry.path;
+      const parts = relativePath.split('/').filter(p => p.length > 0);
 
-      if (!relativePath) continue;
-
-      const depth = relativePath.split('/').length - 1;
-      const isLast = i === sorted.length - 1 ||
-        !sorted[i + 1]?.path.startsWith(entry.path.split('/').slice(0, -1).join('/') + '/');
-
-      const prefix = '│   '.repeat(depth) + (isLast ? '└── ' : '├── ');
-      const name = entry.name;
-
-      if (entry.kind === 'directory') {
-        lines.push(`${prefix}\x1b[1;34m${name}/\x1b[0m`);
-      } else {
-        lines.push(`${prefix}${name}`);
+      let current = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        if (!current.children.has(part)) {
+          const isLast = i === parts.length - 1;
+          current.children.set(part, {
+            name: part,
+            kind: isLast ? entry.kind : 'directory',
+            children: new Map(),
+          });
+        }
+        current = current.children.get(part)!;
       }
     }
+
+    // Generate tree string
+    const lines: string[] = [resolvedPath || '/'];
+
+    const renderTree = (node: TreeNode, prefix: string, isLast: boolean, isRoot: boolean): void => {
+      if (!isRoot) {
+        const connector = isLast ? '└── ' : '├── ';
+        if (node.kind === 'directory') {
+          lines.push(`${prefix}${connector}\x1b[1;34m${node.name}/\x1b[0m`);
+        } else {
+          lines.push(`${prefix}${connector}${node.name}`);
+        }
+      }
+
+      const children = Array.from(node.children.values()).sort((a, b) => {
+        // Directories first, then alphabetical
+        if (a.kind !== b.kind) {
+          return a.kind === 'directory' ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      children.forEach((child, index) => {
+        const isChildLast = index === children.length - 1;
+        const newPrefix = isRoot ? '' : prefix + (isLast ? '    ' : '│   ');
+        renderTree(child, newPrefix, isChildLast, false);
+      });
+    };
+
+    renderTree(root, '', true, true);
 
     return { success: true, output: lines.join('\n') };
   }

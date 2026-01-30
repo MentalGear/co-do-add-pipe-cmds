@@ -48,6 +48,7 @@ export class UIManager {
     mobileMenuBtn: HTMLButtonElement;
     sidebar: HTMLElement;
     sidebarOverlay: HTMLDivElement;
+    sidebarResizeHandle: HTMLDivElement;
     // Provider configuration elements
     providersList: HTMLDivElement;
     addProviderBtn: HTMLButtonElement;
@@ -134,6 +135,7 @@ export class UIManager {
       mobileMenuBtn: document.getElementById('mobile-menu-btn') as HTMLButtonElement,
       sidebar: document.getElementById('sidebar') as HTMLElement,
       sidebarOverlay: document.getElementById('sidebar-overlay') as HTMLDivElement,
+      sidebarResizeHandle: document.getElementById('sidebar-resize-handle') as HTMLDivElement,
       // Provider configuration elements
       providersList: document.getElementById('providers-list') as HTMLDivElement,
       addProviderBtn: document.getElementById('add-provider-btn') as HTMLButtonElement,
@@ -374,6 +376,9 @@ export class UIManager {
       }
     });
 
+    // Sidebar resize handle
+    this.initSidebarResize();
+
     // Prevent escape key from closing the data-share modal (users must explicitly choose)
     this.elements.dataShareModal.addEventListener('cancel', (e) => {
       e.preventDefault();
@@ -439,6 +444,65 @@ export class UIManager {
   private closeMobileSidebar(): void {
     this.elements.sidebar.classList.remove('open');
     this.elements.sidebarOverlay.classList.remove('active');
+  }
+
+  /**
+   * Initialize sidebar resize functionality
+   */
+  private initSidebarResize(): void {
+    const handle = this.elements.sidebarResizeHandle;
+    const sidebar = this.elements.sidebar;
+
+    if (!handle || !sidebar) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    const minWidth = 200;
+    const maxWidth = 600;
+
+    const startResize = (e: MouseEvent) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      document.body.classList.add('sidebar-resizing');
+      handle.classList.add('dragging');
+      e.preventDefault();
+    };
+
+    const doResize = (e: MouseEvent) => {
+      if (!isResizing) return;
+
+      const diff = e.clientX - startX;
+      const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + diff));
+      sidebar.style.width = `${newWidth}px`;
+    };
+
+    const stopResize = () => {
+      if (!isResizing) return;
+
+      isResizing = false;
+      document.body.classList.remove('sidebar-resizing');
+      handle.classList.remove('dragging');
+
+      // Save the width preference
+      const currentWidth = sidebar.offsetWidth;
+      localStorage.setItem('sidebar-width', String(currentWidth));
+    };
+
+    // Restore saved width on load
+    const savedWidth = localStorage.getItem('sidebar-width');
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= minWidth && width <= maxWidth) {
+        sidebar.style.width = `${width}px`;
+      }
+    }
+
+    handle.addEventListener('mousedown', startResize);
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
   }
 
   /**
