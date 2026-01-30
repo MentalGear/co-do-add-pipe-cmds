@@ -28,30 +28,51 @@ interface CommandResult {
 /**
  * Available commands and their descriptions
  */
+/**
+ * Command aliases that map tool names to their implementations
+ * This allows using both Unix-style names (ls, rm) and tool names (list_files, delete_file)
+ */
+const COMMAND_ALIASES: Record<string, string> = {
+  // Tool name -> Unix command mapping
+  list_files: 'ls',
+  open_file: 'cat',
+  create_file: 'touch',
+  delete_file: 'rm',
+  move_file: 'mv',
+  rename_file: 'mv',
+  head_file: 'head',
+  tail_file: 'tail',
+  write_file: 'write',
+};
+
 const COMMANDS: Record<string, string> = {
   help: 'Show available commands',
-  ls: 'List files and directories [path]',
-  cat: 'Display file contents <path>',
+  ls: 'List files and directories [path] (alias: list_files)',
+  cat: 'Display file contents <path> (alias: open_file)',
   mkdir: 'Create directory <path>',
-  touch: 'Create empty file <path>',
-  rm: 'Remove file <path>',
+  touch: 'Create empty file <path> (alias: create_file)',
+  rm: 'Remove file <path> (alias: delete_file)',
   rmdir: 'Remove directory <path>',
-  mv: 'Move/rename file <source> <dest>',
+  mv: 'Move/rename file <source> <dest> (alias: move_file, rename_file)',
   cp: 'Copy file <source> <dest>',
   pwd: 'Print working directory',
   cd: 'Change directory <path>',
   clear: 'Clear terminal',
   tree: 'Show directory tree [path]',
-  head: 'Show first N lines <path> [lines]',
-  tail: 'Show last N lines <path> [lines]',
+  head: 'Show first N lines <path> [lines] (alias: head_file)',
+  tail: 'Show last N lines <path> [lines] (alias: tail_file)',
   grep: 'Search pattern in file <pattern> <path>',
   wc: 'Count lines/words/chars <path>',
+  diff: 'Compare two files <file1> <file2>',
+  sort: 'Sort lines of a file <path>',
+  uniq: 'Filter duplicate lines <path>',
   echo: 'Print text [text...]',
-  write: 'Write content to file <path> <content>',
+  write: 'Write content to file <path> <content> (alias: write_file)',
   import: 'Import files from computer',
   export: 'Export file to download <path>',
   storage: 'Show storage usage',
   reset: 'Clear all files in OPFS',
+  debug: 'Toggle debug mode (show tool input/output)',
 };
 
 /**
@@ -60,10 +81,13 @@ const COMMANDS: Record<string, string> = {
 export class TerminalManager {
   private terminal: Terminal;
   private fitAddon: FitAddon;
+  private resizeObserver: ResizeObserver | null = null;
   private currentLine: string = '';
+  private cursorPosition: number = 0;
   private commandHistory: string[] = [];
   private historyIndex: number = -1;
   private currentDirectory: string = '';
+  private debugMode: boolean = false;
 
   constructor() {
     this.terminal = new Terminal({
@@ -112,7 +136,13 @@ export class TerminalManager {
     // Set up input handling
     this.terminal.onData(this.handleInput.bind(this));
 
-    // Handle resize
+    // Handle container resize with ResizeObserver
+    this.resizeObserver = new ResizeObserver(() => {
+      this.fitAddon.fit();
+    });
+    this.resizeObserver.observe(container);
+
+    // Also handle window resize as fallback
     window.addEventListener('resize', () => {
       this.fitAddon.fit();
     });
@@ -128,7 +158,7 @@ export class TerminalManager {
   private showWelcome(): void {
     this.terminal.writeln('\x1b[1;34m╔════════════════════════════════════════╗\x1b[0m');
     this.terminal.writeln('\x1b[1;34m║\x1b[0m  \x1b[1;32mCo-do OPFS Terminal\x1b[0m                   \x1b[1;34m║\x1b[0m');
-    this.terminal.writeln('\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for available commands       \x1b[1;34m║\x1b[0m');
+    this.terminal.writeln('\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for commands, \x1b[1;33mdebug\x1b[0m for logs \x1b[1;34m║\x1b[0m');
     this.terminal.writeln('\x1b[1;34m╚════════════════════════════════════════╝\x1b[0m');
     this.terminal.writeln('');
   }
@@ -151,14 +181,19 @@ export class TerminalManager {
       this.terminal.writeln('');
       this.executeCommand(this.currentLine.trim());
       this.currentLine = '';
+      this.cursorPosition = 0;
       return;
     }
 
     if (data === '\x7f') {
-      // Backspace
-      if (this.currentLine.length > 0) {
-        this.currentLine = this.currentLine.slice(0, -1);
-        this.terminal.write('\b \b');
+      // Backspace - delete character before cursor
+      if (this.cursorPosition > 0) {
+        const before = this.currentLine.slice(0, this.cursorPosition - 1);
+        const after = this.currentLine.slice(this.cursorPosition);
+        this.currentLine = before + after;
+        this.cursorPosition--;
+        // Move cursor back, rewrite rest of line, clear extra char, restore cursor
+        this.terminal.write('\b' + after + ' ' + '\x1b[' + (after.length + 1) + 'D');
       }
       return;
     }
@@ -184,10 +219,47 @@ export class TerminalManager {
       return;
     }
 
+    if (data === '\x1b[C') {
+      // Right arrow - move cursor right
+      if (this.cursorPosition < this.currentLine.length) {
+        this.cursorPosition++;
+        this.terminal.write('\x1b[C');
+      }
+      return;
+    }
+
+    if (data === '\x1b[D') {
+      // Left arrow - move cursor left
+      if (this.cursorPosition > 0) {
+        this.cursorPosition--;
+        this.terminal.write('\x1b[D');
+      }
+      return;
+    }
+
+    if (data === '\x01') {
+      // Ctrl+A - move to beginning of line
+      if (this.cursorPosition > 0) {
+        this.terminal.write('\x1b[' + this.cursorPosition + 'D');
+        this.cursorPosition = 0;
+      }
+      return;
+    }
+
+    if (data === '\x05') {
+      // Ctrl+E - move to end of line
+      if (this.cursorPosition < this.currentLine.length) {
+        this.terminal.write('\x1b[' + (this.currentLine.length - this.cursorPosition) + 'C');
+        this.cursorPosition = this.currentLine.length;
+      }
+      return;
+    }
+
     if (data === '\x03') {
       // Ctrl+C
       this.terminal.writeln('^C');
       this.currentLine = '';
+      this.cursorPosition = 0;
       this.prompt();
       return;
     }
@@ -199,10 +271,17 @@ export class TerminalManager {
       return;
     }
 
-    // Regular character input
+    // Regular character input - insert at cursor position
     if (data >= ' ' && data <= '~') {
-      this.currentLine += data;
-      this.terminal.write(data);
+      const before = this.currentLine.slice(0, this.cursorPosition);
+      const after = this.currentLine.slice(this.cursorPosition);
+      this.currentLine = before + data + after;
+      this.cursorPosition++;
+      // Write character and rest of line, then move cursor back
+      this.terminal.write(data + after);
+      if (after.length > 0) {
+        this.terminal.write('\x1b[' + after.length + 'D');
+      }
     }
   }
 
@@ -213,6 +292,7 @@ export class TerminalManager {
     // Clear current line
     this.terminal.write('\x1b[2K\r');
     this.prompt();
+    this.cursorPosition = newLine.length;
     this.currentLine = newLine;
     this.terminal.write(newLine);
   }
@@ -235,17 +315,31 @@ export class TerminalManager {
     const command = parts[0]?.toLowerCase() || '';
     const args = parts.slice(1);
 
+    // Debug: log command input
+    if (this.debugMode && command !== 'debug') {
+      this.logDebugInput(command, args);
+    }
+
     try {
       const result = await this.runCommand(command, args);
 
+      // Debug: log command output
+      if (this.debugMode && command !== 'debug') {
+        this.logDebugOutput(result);
+      }
+
       if (result.output) {
-        this.terminal.writeln(result.output);
+        // Convert \n to \r\n for proper xterm line breaks
+        this.terminal.writeln(result.output.replace(/\n/g, '\r\n'));
       }
 
       if (result.error) {
         this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${result.error}`);
       }
     } catch (error) {
+      if (this.debugMode) {
+        this.logDebugOutput({ success: false, output: '', error: (error as Error).message });
+      }
       this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${(error as Error).message}`);
     }
 
@@ -314,7 +408,10 @@ export class TerminalManager {
    * Run a command and return result
    */
   private async runCommand(command: string, args: string[]): Promise<CommandResult> {
-    switch (command) {
+    // Resolve command aliases (tool names -> Unix commands)
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+
+    switch (resolvedCommand) {
       case 'help':
         return this.cmdHelp();
 
@@ -367,6 +464,15 @@ export class TerminalManager {
       case 'wc':
         return this.cmdWc(args[0]);
 
+      case 'diff':
+        return this.cmdDiff(args[0], args[1]);
+
+      case 'sort':
+        return this.cmdSort(args[0]);
+
+      case 'uniq':
+        return this.cmdUniq(args[0]);
+
       case 'echo':
         return { success: true, output: args.join(' ') };
 
@@ -384,6 +490,9 @@ export class TerminalManager {
 
       case 'reset':
         return this.cmdReset();
+
+      case 'debug':
+        return this.cmdDebug();
 
       default:
         return {
@@ -544,32 +653,64 @@ export class TerminalManager {
     }
 
     // Build tree structure
-    const lines: string[] = [resolvedPath || '/'];
+    interface TreeNode {
+      name: string;
+      kind: 'file' | 'directory';
+      children: Map<string, TreeNode>;
+    }
 
-    // Sort entries by path
-    const sorted = filtered.sort((a, b) => a.path.localeCompare(b.path));
+    const root: TreeNode = { name: '', kind: 'directory', children: new Map() };
 
-    for (let i = 0; i < sorted.length; i++) {
-      const entry = sorted[i]!;
+    for (const entry of filtered) {
       const relativePath = resolvedPath
-        ? entry.path.slice(resolvedPath.length + 1)
+        ? entry.path.slice(resolvedPath.length + 1) || entry.name
         : entry.path;
+      const parts = relativePath.split('/').filter(p => p.length > 0);
 
-      if (!relativePath) continue;
-
-      const depth = relativePath.split('/').length - 1;
-      const isLast = i === sorted.length - 1 ||
-        !sorted[i + 1]?.path.startsWith(entry.path.split('/').slice(0, -1).join('/') + '/');
-
-      const prefix = '│   '.repeat(depth) + (isLast ? '└── ' : '├── ');
-      const name = entry.name;
-
-      if (entry.kind === 'directory') {
-        lines.push(`${prefix}\x1b[1;34m${name}/\x1b[0m`);
-      } else {
-        lines.push(`${prefix}${name}`);
+      let current = root;
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i]!;
+        if (!current.children.has(part)) {
+          const isLast = i === parts.length - 1;
+          current.children.set(part, {
+            name: part,
+            kind: isLast ? entry.kind : 'directory',
+            children: new Map(),
+          });
+        }
+        current = current.children.get(part)!;
       }
     }
+
+    // Generate tree string
+    const lines: string[] = [resolvedPath || '/'];
+
+    const renderTree = (node: TreeNode, prefix: string, isLast: boolean, isRoot: boolean): void => {
+      if (!isRoot) {
+        const connector = isLast ? '└── ' : '├── ';
+        if (node.kind === 'directory') {
+          lines.push(`${prefix}${connector}\x1b[1;34m${node.name}/\x1b[0m`);
+        } else {
+          lines.push(`${prefix}${connector}${node.name}`);
+        }
+      }
+
+      const children = Array.from(node.children.values()).sort((a, b) => {
+        // Directories first, then alphabetical
+        if (a.kind !== b.kind) {
+          return a.kind === 'directory' ? -1 : 1;
+        }
+        return a.name.localeCompare(b.name);
+      });
+
+      children.forEach((child, index) => {
+        const isChildLast = index === children.length - 1;
+        const newPrefix = isRoot ? '' : prefix + (isLast ? '    ' : '│   ');
+        renderTree(child, newPrefix, isChildLast, false);
+      });
+    };
+
+    renderTree(root, '', true, true);
 
     return { success: true, output: lines.join('\n') };
   }
@@ -642,6 +783,77 @@ export class TerminalManager {
       success: true,
       output: `  ${lines.toString().padStart(6)} ${words.toString().padStart(6)} ${chars.toString().padStart(6)} ${path}`,
     };
+  }
+
+  private async cmdDiff(path1?: string, path2?: string): Promise<CommandResult> {
+    if (!path1 || !path2) {
+      return { success: false, output: '', error: 'Usage: diff <file1> <file2>' };
+    }
+
+    const resolvedPath1 = this.resolvePath(path1);
+    const resolvedPath2 = this.resolvePath(path2);
+
+    try {
+      const content1 = await opfsFileSystem.readFile(resolvedPath1);
+      const content2 = await opfsFileSystem.readFile(resolvedPath2);
+
+      const lines1 = content1.split('\n');
+      const lines2 = content2.split('\n');
+
+      if (content1 === content2) {
+        return { success: true, output: '\x1b[2m(files are identical)\x1b[0m' };
+      }
+
+      // Simple line-by-line diff
+      const output: string[] = [];
+      const maxLines = Math.max(lines1.length, lines2.length);
+
+      for (let i = 0; i < maxLines; i++) {
+        const line1 = lines1[i];
+        const line2 = lines2[i];
+
+        if (line1 === undefined) {
+          output.push(`\x1b[32m+ ${line2}\x1b[0m`);
+        } else if (line2 === undefined) {
+          output.push(`\x1b[31m- ${line1}\x1b[0m`);
+        } else if (line1 !== line2) {
+          output.push(`\x1b[31m- ${line1}\x1b[0m`);
+          output.push(`\x1b[32m+ ${line2}\x1b[0m`);
+        }
+      }
+
+      return { success: true, output: output.join('\n') };
+    } catch {
+      return { success: false, output: '', error: 'Failed to read one or both files' };
+    }
+  }
+
+  private async cmdSort(path?: string): Promise<CommandResult> {
+    if (!path) {
+      return { success: false, output: '', error: 'Usage: sort <path>' };
+    }
+
+    const resolvedPath = this.resolvePath(path);
+    const content = await opfsFileSystem.readFile(resolvedPath);
+
+    const lines = content.split('\n');
+    const sorted = lines.sort((a, b) => a.localeCompare(b));
+
+    return { success: true, output: sorted.join('\n') };
+  }
+
+  private async cmdUniq(path?: string): Promise<CommandResult> {
+    if (!path) {
+      return { success: false, output: '', error: 'Usage: uniq <path>' };
+    }
+
+    const resolvedPath = this.resolvePath(path);
+    const content = await opfsFileSystem.readFile(resolvedPath);
+
+    const lines = content.split('\n');
+    const unique = lines.filter((line, index, arr) => index === 0 || line !== arr[index - 1]);
+
+    return { success: true, output: unique.join('\n') };
   }
 
   private async cmdWrite(path?: string, content?: string): Promise<CommandResult> {
@@ -726,6 +938,75 @@ export class TerminalManager {
     await opfsFileSystem.clearAll();
     this.currentDirectory = '';
     return { success: true, output: '\x1b[1;33mOPFS cleared. All files removed.\x1b[0m' };
+  }
+
+  private cmdDebug(): CommandResult {
+    this.debugMode = !this.debugMode;
+    const status = this.debugMode ? 'enabled' : 'disabled';
+    const color = this.debugMode ? '\x1b[1;32m' : '\x1b[1;31m';
+    return {
+      success: true,
+      output: `${color}Debug mode ${status}\x1b[0m`,
+    };
+  }
+
+  /**
+   * Check if debug mode is enabled
+   */
+  isDebugMode(): boolean {
+    return this.debugMode;
+  }
+
+  /**
+   * Log debug output for tool calls
+   */
+  /**
+   * Log debug input for command execution
+   */
+  private logDebugInput(command: string, args: string[]): void {
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+    const toolName = Object.entries(COMMAND_ALIASES).find(([, v]) => v === resolvedCommand)?.[0] || resolvedCommand;
+
+    this.terminal.writeln('');
+    this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Input ──────────────────\x1b[0m');
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}`);
+
+    if (args.length > 0) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mArgs:\x1b[0m ${JSON.stringify(args)}`);
+    }
+
+    this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
+  }
+
+  /**
+   * Log debug output for command execution
+   */
+  private logDebugOutput(result: CommandResult): void {
+    this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Output ─────────────────\x1b[0m');
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mSuccess:\x1b[0m ${result.success ? '\x1b[32mtrue\x1b[0m' : '\x1b[31mfalse\x1b[0m'}`);
+
+    if (result.error) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;31mError:\x1b[0m ${result.error}`);
+    }
+
+    if (result.output) {
+      const lines = result.output.split('\n');
+      const maxLines = 10;
+      const truncated = lines.length > maxLines;
+      const displayLines = truncated ? lines.slice(0, maxLines) : lines;
+
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mOutput:\x1b[0m (${lines.length} lines)`);
+      for (const line of displayLines) {
+        // Escape ANSI codes in the output for display
+        this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+      }
+      if (truncated) {
+        this.terminal.writeln(`\x1b[1;35m│\x1b[0m   \x1b[2m... ${lines.length - maxLines} more lines\x1b[0m`);
+      }
+    }
+
+    this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
+    this.terminal.writeln('');
   }
 
   /**

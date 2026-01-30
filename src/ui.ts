@@ -25,9 +25,9 @@ import { ModelMessage, Tool } from 'ai';
  */
 export class UIManager {
   private elements: {
-    selectFolderBtn: HTMLButtonElement;
-    folderInfo: HTMLDivElement;
-    fileList: HTMLDivElement;
+    selectFolderBtn: HTMLButtonElement | null;
+    folderInfo: HTMLDivElement | null;
+    fileList: HTMLDivElement | null;
     promptInput: HTMLTextAreaElement;
     sendBtn: HTMLButtonElement;
     voiceBtn: HTMLButtonElement;
@@ -48,6 +48,7 @@ export class UIManager {
     mobileMenuBtn: HTMLButtonElement;
     sidebar: HTMLElement;
     sidebarOverlay: HTMLDivElement;
+    sidebarResizeHandle: HTMLDivElement;
     // Provider configuration elements
     providersList: HTMLDivElement;
     addProviderBtn: HTMLButtonElement;
@@ -109,11 +110,11 @@ export class UIManager {
   private readonly MAX_RESTART_ATTEMPTS = 3;
 
   constructor() {
-    // Get all DOM elements
+    // Get all DOM elements (some may be null if not present in current UI mode)
     this.elements = {
-      selectFolderBtn: document.getElementById('select-folder-btn') as HTMLButtonElement,
-      folderInfo: document.getElementById('folder-info') as HTMLDivElement,
-      fileList: document.getElementById('file-list') as HTMLDivElement,
+      selectFolderBtn: document.getElementById('select-folder-btn') as HTMLButtonElement | null,
+      folderInfo: document.getElementById('folder-info') as HTMLDivElement | null,
+      fileList: document.getElementById('file-list') as HTMLDivElement | null,
       promptInput: document.getElementById('prompt-input') as HTMLTextAreaElement,
       sendBtn: document.getElementById('send-btn') as HTMLButtonElement,
       voiceBtn: document.getElementById('voice-btn') as HTMLButtonElement,
@@ -134,6 +135,7 @@ export class UIManager {
       mobileMenuBtn: document.getElementById('mobile-menu-btn') as HTMLButtonElement,
       sidebar: document.getElementById('sidebar') as HTMLElement,
       sidebarOverlay: document.getElementById('sidebar-overlay') as HTMLDivElement,
+      sidebarResizeHandle: document.getElementById('sidebar-resize-handle') as HTMLDivElement,
       // Provider configuration elements
       providersList: document.getElementById('providers-list') as HTMLDivElement,
       addProviderBtn: document.getElementById('add-provider-btn') as HTMLButtonElement,
@@ -296,7 +298,9 @@ export class UIManager {
           folderInfoHtml += ' <span class="live-updates-indicator">(Live updates enabled)</span>';
         }
 
-        this.elements.folderInfo.innerHTML = folderInfoHtml;
+        if (this.elements.folderInfo) {
+          this.elements.folderInfo.innerHTML = folderInfoHtml;
+        }
 
         // List files
         await this.refreshFileList();
@@ -324,8 +328,8 @@ export class UIManager {
    * Attach event listeners
    */
   private attachEventListeners(): void {
-    // Folder selection
-    this.elements.selectFolderBtn.addEventListener('click', () => this.handleSelectFolder());
+    // Folder selection (optional - may not exist in OPFS-only mode)
+    this.elements.selectFolderBtn?.addEventListener('click', () => this.handleSelectFolder());
 
     // Send prompt
     this.elements.sendBtn.addEventListener('click', () => this.handleSendPrompt());
@@ -373,6 +377,9 @@ export class UIManager {
         }
       }
     });
+
+    // Sidebar resize handle
+    this.initSidebarResize();
 
     // Prevent escape key from closing the data-share modal (users must explicitly choose)
     this.elements.dataShareModal.addEventListener('cancel', (e) => {
@@ -439,6 +446,69 @@ export class UIManager {
   private closeMobileSidebar(): void {
     this.elements.sidebar.classList.remove('open');
     this.elements.sidebarOverlay.classList.remove('active');
+  }
+
+  /**
+   * Initialize sidebar resize functionality
+   */
+  private initSidebarResize(): void {
+    const handle = this.elements.sidebarResizeHandle;
+    const sidebar = this.elements.sidebar;
+
+    if (!handle || !sidebar) return;
+
+    let isResizing = false;
+    let startX = 0;
+    let startWidth = 0;
+
+    const minWidth = 200;
+    const maxWidth = 600;
+
+    const setSidebarWidth = (width: number) => {
+      document.documentElement.style.setProperty('--sidebar-width', `${width}px`);
+    };
+
+    const startResize = (e: MouseEvent) => {
+      isResizing = true;
+      startX = e.clientX;
+      startWidth = sidebar.offsetWidth;
+      document.body.classList.add('sidebar-resizing');
+      handle.classList.add('dragging');
+      e.preventDefault();
+    };
+
+    const doResize = (e: MouseEvent) => {
+      if (!isResizing) return;
+
+      const diff = e.clientX - startX;
+      const newWidth = Math.min(maxWidth, Math.max(minWidth, startWidth + diff));
+      setSidebarWidth(newWidth);
+    };
+
+    const stopResize = () => {
+      if (!isResizing) return;
+
+      isResizing = false;
+      document.body.classList.remove('sidebar-resizing');
+      handle.classList.remove('dragging');
+
+      // Save the width preference
+      const currentWidth = sidebar.offsetWidth;
+      localStorage.setItem('sidebar-width', String(currentWidth));
+    };
+
+    // Restore saved width on load
+    const savedWidth = localStorage.getItem('sidebar-width');
+    if (savedWidth) {
+      const width = parseInt(savedWidth, 10);
+      if (width >= minWidth && width <= maxWidth) {
+        setSidebarWidth(width);
+      }
+    }
+
+    handle.addEventListener('mousedown', startResize);
+    document.addEventListener('mousemove', doResize);
+    document.addEventListener('mouseup', stopResize);
   }
 
   /**
@@ -1542,7 +1612,9 @@ export class UIManager {
         folderInfoHtml += ' <span class="live-updates-indicator">(Live updates enabled)</span>';
       }
 
-      this.elements.folderInfo.innerHTML = folderInfoHtml;
+      if (this.elements.folderInfo) {
+        this.elements.folderInfo.innerHTML = folderInfoHtml;
+      }
 
       // List files
       await this.refreshFileList();
@@ -1633,12 +1705,16 @@ export class UIManager {
    * Display file list
    */
   private displayFileList(entries: FileSystemEntry[]): void {
+    if (!this.elements.fileList) return;
+
+    const fileList = this.elements.fileList;
+
     // Use view transition for file list updates
     withViewTransition(() => {
-      this.elements.fileList.innerHTML = '';
+      fileList.innerHTML = '';
 
       if (entries.length === 0) {
-        this.elements.fileList.innerHTML = '<p>No files found in the selected folder.</p>';
+        fileList.innerHTML = '<p>No files found in the selected folder.</p>';
         return;
       }
 
@@ -1670,7 +1746,7 @@ export class UIManager {
         fragment.appendChild(item);
       });
 
-      this.elements.fileList.appendChild(fragment);
+      fileList.appendChild(fragment);
     });
   }
 
