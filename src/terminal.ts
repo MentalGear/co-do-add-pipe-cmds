@@ -28,30 +28,51 @@ interface CommandResult {
 /**
  * Available commands and their descriptions
  */
+/**
+ * Command aliases that map tool names to their implementations
+ * This allows using both Unix-style names (ls, rm) and tool names (list_files, delete_file)
+ */
+const COMMAND_ALIASES: Record<string, string> = {
+  // Tool name -> Unix command mapping
+  list_files: 'ls',
+  open_file: 'cat',
+  create_file: 'touch',
+  delete_file: 'rm',
+  move_file: 'mv',
+  rename_file: 'mv',
+  head_file: 'head',
+  tail_file: 'tail',
+  write_file: 'write',
+};
+
 const COMMANDS: Record<string, string> = {
   help: 'Show available commands',
-  ls: 'List files and directories [path]',
-  cat: 'Display file contents <path>',
+  ls: 'List files and directories [path] (alias: list_files)',
+  cat: 'Display file contents <path> (alias: open_file)',
   mkdir: 'Create directory <path>',
-  touch: 'Create empty file <path>',
-  rm: 'Remove file <path>',
+  touch: 'Create empty file <path> (alias: create_file)',
+  rm: 'Remove file <path> (alias: delete_file)',
   rmdir: 'Remove directory <path>',
-  mv: 'Move/rename file <source> <dest>',
+  mv: 'Move/rename file <source> <dest> (alias: move_file, rename_file)',
   cp: 'Copy file <source> <dest>',
   pwd: 'Print working directory',
   cd: 'Change directory <path>',
   clear: 'Clear terminal',
   tree: 'Show directory tree [path]',
-  head: 'Show first N lines <path> [lines]',
-  tail: 'Show last N lines <path> [lines]',
+  head: 'Show first N lines <path> [lines] (alias: head_file)',
+  tail: 'Show last N lines <path> [lines] (alias: tail_file)',
   grep: 'Search pattern in file <pattern> <path>',
   wc: 'Count lines/words/chars <path>',
+  diff: 'Compare two files <file1> <file2>',
+  sort: 'Sort lines of a file <path>',
+  uniq: 'Filter duplicate lines <path>',
   echo: 'Print text [text...]',
-  write: 'Write content to file <path> <content>',
+  write: 'Write content to file <path> <content> (alias: write_file)',
   import: 'Import files from computer',
   export: 'Export file to download <path>',
   storage: 'Show storage usage',
   reset: 'Clear all files in OPFS',
+  debug: 'Toggle debug mode (show tool input/output)',
 };
 
 /**
@@ -60,10 +81,12 @@ const COMMANDS: Record<string, string> = {
 export class TerminalManager {
   private terminal: Terminal;
   private fitAddon: FitAddon;
+  private resizeObserver: ResizeObserver | null = null;
   private currentLine: string = '';
   private commandHistory: string[] = [];
   private historyIndex: number = -1;
   private currentDirectory: string = '';
+  private debugMode: boolean = false;
 
   constructor() {
     this.terminal = new Terminal({
@@ -112,7 +135,13 @@ export class TerminalManager {
     // Set up input handling
     this.terminal.onData(this.handleInput.bind(this));
 
-    // Handle resize
+    // Handle container resize with ResizeObserver
+    this.resizeObserver = new ResizeObserver(() => {
+      this.fitAddon.fit();
+    });
+    this.resizeObserver.observe(container);
+
+    // Also handle window resize as fallback
     window.addEventListener('resize', () => {
       this.fitAddon.fit();
     });
@@ -128,7 +157,7 @@ export class TerminalManager {
   private showWelcome(): void {
     this.terminal.writeln('\x1b[1;34m╔════════════════════════════════════════╗\x1b[0m');
     this.terminal.writeln('\x1b[1;34m║\x1b[0m  \x1b[1;32mCo-do OPFS Terminal\x1b[0m                   \x1b[1;34m║\x1b[0m');
-    this.terminal.writeln('\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for available commands       \x1b[1;34m║\x1b[0m');
+    this.terminal.writeln('\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for commands, \x1b[1;33mdebug\x1b[0m for logs \x1b[1;34m║\x1b[0m');
     this.terminal.writeln('\x1b[1;34m╚════════════════════════════════════════╝\x1b[0m');
     this.terminal.writeln('');
   }
@@ -314,7 +343,10 @@ export class TerminalManager {
    * Run a command and return result
    */
   private async runCommand(command: string, args: string[]): Promise<CommandResult> {
-    switch (command) {
+    // Resolve command aliases (tool names -> Unix commands)
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+
+    switch (resolvedCommand) {
       case 'help':
         return this.cmdHelp();
 
@@ -367,6 +399,15 @@ export class TerminalManager {
       case 'wc':
         return this.cmdWc(args[0]);
 
+      case 'diff':
+        return this.cmdDiff(args[0], args[1]);
+
+      case 'sort':
+        return this.cmdSort(args[0]);
+
+      case 'uniq':
+        return this.cmdUniq(args[0]);
+
       case 'echo':
         return { success: true, output: args.join(' ') };
 
@@ -384,6 +425,9 @@ export class TerminalManager {
 
       case 'reset':
         return this.cmdReset();
+
+      case 'debug':
+        return this.cmdDebug();
 
       default:
         return {
@@ -644,6 +688,77 @@ export class TerminalManager {
     };
   }
 
+  private async cmdDiff(path1?: string, path2?: string): Promise<CommandResult> {
+    if (!path1 || !path2) {
+      return { success: false, output: '', error: 'Usage: diff <file1> <file2>' };
+    }
+
+    const resolvedPath1 = this.resolvePath(path1);
+    const resolvedPath2 = this.resolvePath(path2);
+
+    try {
+      const content1 = await opfsFileSystem.readFile(resolvedPath1);
+      const content2 = await opfsFileSystem.readFile(resolvedPath2);
+
+      const lines1 = content1.split('\n');
+      const lines2 = content2.split('\n');
+
+      if (content1 === content2) {
+        return { success: true, output: '\x1b[2m(files are identical)\x1b[0m' };
+      }
+
+      // Simple line-by-line diff
+      const output: string[] = [];
+      const maxLines = Math.max(lines1.length, lines2.length);
+
+      for (let i = 0; i < maxLines; i++) {
+        const line1 = lines1[i];
+        const line2 = lines2[i];
+
+        if (line1 === undefined) {
+          output.push(`\x1b[32m+ ${line2}\x1b[0m`);
+        } else if (line2 === undefined) {
+          output.push(`\x1b[31m- ${line1}\x1b[0m`);
+        } else if (line1 !== line2) {
+          output.push(`\x1b[31m- ${line1}\x1b[0m`);
+          output.push(`\x1b[32m+ ${line2}\x1b[0m`);
+        }
+      }
+
+      return { success: true, output: output.join('\n') };
+    } catch {
+      return { success: false, output: '', error: 'Failed to read one or both files' };
+    }
+  }
+
+  private async cmdSort(path?: string): Promise<CommandResult> {
+    if (!path) {
+      return { success: false, output: '', error: 'Usage: sort <path>' };
+    }
+
+    const resolvedPath = this.resolvePath(path);
+    const content = await opfsFileSystem.readFile(resolvedPath);
+
+    const lines = content.split('\n');
+    const sorted = lines.sort((a, b) => a.localeCompare(b));
+
+    return { success: true, output: sorted.join('\n') };
+  }
+
+  private async cmdUniq(path?: string): Promise<CommandResult> {
+    if (!path) {
+      return { success: false, output: '', error: 'Usage: uniq <path>' };
+    }
+
+    const resolvedPath = this.resolvePath(path);
+    const content = await opfsFileSystem.readFile(resolvedPath);
+
+    const lines = content.split('\n');
+    const unique = lines.filter((line, index, arr) => index === 0 || line !== arr[index - 1]);
+
+    return { success: true, output: unique.join('\n') };
+  }
+
   private async cmdWrite(path?: string, content?: string): Promise<CommandResult> {
     if (!path) {
       return { success: false, output: '', error: 'Usage: write <path> <content>' };
@@ -726,6 +841,49 @@ export class TerminalManager {
     await opfsFileSystem.clearAll();
     this.currentDirectory = '';
     return { success: true, output: '\x1b[1;33mOPFS cleared. All files removed.\x1b[0m' };
+  }
+
+  private cmdDebug(): CommandResult {
+    this.debugMode = !this.debugMode;
+    const status = this.debugMode ? 'enabled' : 'disabled';
+    const color = this.debugMode ? '\x1b[1;32m' : '\x1b[1;31m';
+    return {
+      success: true,
+      output: `${color}Debug mode ${status}\x1b[0m`,
+    };
+  }
+
+  /**
+   * Check if debug mode is enabled
+   */
+  isDebugMode(): boolean {
+    return this.debugMode;
+  }
+
+  /**
+   * Log debug output for tool calls
+   */
+  logToolCall(toolName: string, input: unknown, output: unknown): void {
+    if (!this.debugMode) return;
+
+    this.terminal.writeln('');
+    this.terminal.writeln('\x1b[1;35m┌─ Tool Call ─────────────────────────────\x1b[0m');
+    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mTool:\x1b[0m ${toolName}`);
+    this.terminal.writeln('\x1b[1;35m│\x1b[0m \x1b[1;36mInput:\x1b[0m');
+
+    const inputStr = JSON.stringify(input, null, 2);
+    for (const line of inputStr.split('\n')) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+    }
+
+    this.terminal.writeln('\x1b[1;35m│\x1b[0m \x1b[1;36mOutput:\x1b[0m');
+    const outputStr = JSON.stringify(output, null, 2);
+    for (const line of outputStr.split('\n')) {
+      this.terminal.writeln(`\x1b[1;35m│\x1b[0m   ${line}`);
+    }
+
+    this.terminal.writeln('\x1b[1;35m└──────────────────────────────────────────\x1b[0m');
+    this.terminal.writeln('');
   }
 
   /**
