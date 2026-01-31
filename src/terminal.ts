@@ -68,6 +68,7 @@ const COMMANDS: Record<string, string> = {
   uniq: 'Filter duplicate lines <path>',
   echo: 'Print text [text...]',
   write: 'Write content to file <path> <content> (alias: write_file)',
+  '|': 'Pipe operator - chain commands (e.g., cat file.txt | grep pattern | sort)',
   import: 'Import files from computer',
   export: 'Export file to download <path>',
   storage: 'Show storage usage',
@@ -158,7 +159,9 @@ export class TerminalManager {
   private showWelcome(): void {
     this.terminal.writeln('\x1b[1;34m╔════════════════════════════════════════╗\x1b[0m');
     this.terminal.writeln('\x1b[1;34m║\x1b[0m  \x1b[1;32mCo-do OPFS Terminal\x1b[0m                   \x1b[1;34m║\x1b[0m');
-    this.terminal.writeln('\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for commands, \x1b[1;33mdebug\x1b[0m for logs \x1b[1;34m║\x1b[0m');
+    this.terminal.writeln(
+      '\x1b[1;34m║\x1b[0m  Type \x1b[1;33mhelp\x1b[0m for commands, \x1b[1;33mdebug\x1b[0m for logs \x1b[1;34m║\x1b[0m',
+    );
     this.terminal.writeln('\x1b[1;34m╚════════════════════════════════════════╝\x1b[0m');
     this.terminal.writeln('');
   }
@@ -310,6 +313,13 @@ export class TerminalManager {
     this.commandHistory.push(input);
     this.historyIndex = -1;
 
+    // Check if command contains pipe operator
+    if (this.containsPipeOperator(input)) {
+      await this.executePipedCommand(input);
+      this.prompt();
+      return;
+    }
+
     // Parse command and arguments
     const parts = this.parseCommand(input);
     const command = parts[0]?.toLowerCase() || '';
@@ -338,7 +348,11 @@ export class TerminalManager {
       }
     } catch (error) {
       if (this.debugMode) {
-        this.logDebugOutput({ success: false, output: '', error: (error as Error).message });
+        this.logDebugOutput({
+          success: false,
+          output: '',
+          error: (error as Error).message,
+        });
       }
       this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${(error as Error).message}`);
     }
@@ -392,7 +406,7 @@ export class TerminalManager {
     }
 
     if (path === '..') {
-      const parts = this.currentDirectory.split('/').filter(p => p);
+      const parts = this.currentDirectory.split('/').filter((p) => p);
       parts.pop();
       return parts.join('/');
     }
@@ -402,6 +416,210 @@ export class TerminalManager {
     }
 
     return this.currentDirectory ? `${this.currentDirectory}/${path}` : path;
+  }
+
+  /**
+   * Check if input contains pipe operator outside of quotes
+   */
+  private containsPipeOperator(input: string): boolean {
+    let inQuote = false;
+    let quoteChar = '';
+
+    for (const char of input) {
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = true;
+        quoteChar = char;
+      } else if (char === quoteChar && inQuote) {
+        inQuote = false;
+        quoteChar = '';
+      } else if (char === '|' && !inQuote) {
+        return true;
+      }
+    }
+
+    return false;
+  }
+
+  /**
+   * Parse piped commands from input string
+   * Returns array of {command, args} objects
+   */
+  private parsePipedCommands(input: string): Array<{ command: string; args: string[] }> {
+    const commands: Array<{ command: string; args: string[] }> = [];
+    let current = '';
+    let inQuote = false;
+    let quoteChar = '';
+
+    // Split by pipe operator, respecting quotes
+    const segments: string[] = [];
+    for (const char of input) {
+      if ((char === '"' || char === "'") && !inQuote) {
+        inQuote = true;
+        quoteChar = char;
+        current += char;
+      } else if (char === quoteChar && inQuote) {
+        inQuote = false;
+        quoteChar = '';
+        current += char;
+      } else if (char === '|' && !inQuote) {
+        segments.push(current.trim());
+        current = '';
+      } else {
+        current += char;
+      }
+    }
+    if (current.trim()) {
+      segments.push(current.trim());
+    }
+
+    // Parse each segment into command and args
+    for (const segment of segments) {
+      const parts = this.parseCommand(segment);
+      if (parts.length > 0) {
+        commands.push({
+          command: parts[0]?.toLowerCase() || '',
+          args: parts.slice(1),
+        });
+      }
+    }
+
+    return commands;
+  }
+
+  /**
+   * Map terminal command names to pipeable tool names
+   * Returns null if command is not pipeable
+   */
+  private mapTerminalCommandToPipeable(command: string): string | null {
+    // Resolve aliases first
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+
+    const mapping: Record<string, string> = {
+      cat: 'cat',
+      grep: 'grep',
+      sort: 'sort',
+      uniq: 'uniq',
+      head: 'head',
+      tail: 'tail',
+      wc: 'wc',
+      write: 'write_file',
+      echo: 'echo',
+    };
+
+    return mapping[resolvedCommand] || null;
+  }
+
+  /**
+   * Convert terminal command arguments to pipeable tool args format
+   */
+  private convertToPipeableArgs(command: string, args: string[]): Record<string, unknown> {
+    const resolvedCommand = COMMAND_ALIASES[command] || command;
+
+    switch (resolvedCommand) {
+      case 'cat':
+        return args.length > 0 ? { paths: args.map((p) => this.resolvePath(p)) } : {};
+
+      case 'grep':
+        return {
+          pattern: args[0] || '',
+          path: args[1] ? this.resolvePath(args[1]) : undefined,
+          caseInsensitive: false,
+          invertMatch: false,
+        };
+
+      case 'sort':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          reverse: false,
+          numeric: false,
+          unique: false,
+          ignoreCase: false,
+        };
+
+      case 'uniq':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          count: false,
+          duplicatesOnly: false,
+          uniqueOnly: false,
+          ignoreCase: false,
+        };
+
+      case 'head':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          lines: args[1] ? parseInt(args[1]) : 10,
+        };
+
+      case 'tail':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          lines: args[1] ? parseInt(args[1]) : 10,
+        };
+
+      case 'wc':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          countLines: true,
+          countWords: true,
+          countChars: true,
+        };
+
+      case 'write':
+        return {
+          path: args[0] ? this.resolvePath(args[0]) : undefined,
+          content: args.slice(1).join(' '),
+        };
+
+      case 'echo':
+        return { text: args.join(' ') };
+
+      default:
+        return {};
+    }
+  }
+
+  /**
+   * Execute a piped command chain
+   */
+  private async executePipedCommand(input: string): Promise<void> {
+    try {
+      const commands = this.parsePipedCommands(input);
+
+      if (commands.length === 0) {
+        this.terminal.writeln('\x1b[1;31mError:\x1b[0m Empty pipe command');
+        return;
+      }
+
+      // Validate all commands are pipeable
+      for (const cmd of commands) {
+        const pipeableName = this.mapTerminalCommandToPipeable(cmd.command);
+        if (!pipeableName) {
+          this.terminal.writeln(`\x1b[1;31mError:\x1b[0m Command '${cmd.command}' cannot be used in a pipe`);
+          return;
+        }
+      }
+
+      // Import pipeable execution function from tools.ts
+      const { executePipeableChain } = await import('./tools');
+
+      // Convert commands to pipeable format
+      const pipeableCommands = commands.map((cmd) => ({
+        tool: this.mapTerminalCommandToPipeable(cmd.command)!,
+        args: this.convertToPipeableArgs(cmd.command, cmd.args),
+      }));
+
+      // Execute the pipe chain
+      const result = await executePipeableChain(opfsFileSystem as any, pipeableCommands);
+
+      if (result.success && result.output) {
+        this.terminal.writeln(result.output.replace(/\n/g, '\r\n'));
+      } else if (result.error) {
+        this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${result.error}`);
+      }
+    } catch (error) {
+      this.terminal.writeln(`\x1b[1;31mError:\x1b[0m ${(error as Error).message}`);
+    }
   }
 
   /**
@@ -474,7 +692,10 @@ export class TerminalManager {
         return this.cmdUniq(args[0]);
 
       case 'echo':
-        return { success: true, output: args.join(' ') };
+        return {
+          success: true,
+          output: args.join(' ').replace(/\\n/g, '\n'),
+        };
 
       case 'write':
         return this.cmdWrite(args[0], args.slice(1).join(' '));
@@ -519,19 +740,18 @@ export class TerminalManager {
     const resolvedPath = path ? this.resolvePath(path) : this.currentDirectory;
     const entries = await opfsFileSystem.listFiles();
 
-    const filtered = entries.filter(e => {
+    const filtered = entries.filter((e) => {
       if (!resolvedPath) {
         return !e.path.includes('/');
       }
-      return e.path.startsWith(resolvedPath + '/') &&
-        !e.path.slice(resolvedPath.length + 1).includes('/');
+      return e.path.startsWith(resolvedPath + '/') && !e.path.slice(resolvedPath.length + 1).includes('/');
     });
 
     if (filtered.length === 0) {
       return { success: true, output: '\x1b[2m(empty)\x1b[0m' };
     }
 
-    const lines = filtered.map(e => {
+    const lines = filtered.map((e) => {
       const name = e.name;
       if (e.kind === 'directory') {
         return `\x1b[1;34m${name}/\x1b[0m`;
@@ -594,24 +814,38 @@ export class TerminalManager {
 
   private async cmdMv(source?: string, dest?: string): Promise<CommandResult> {
     if (!source || !dest) {
-      return { success: false, output: '', error: 'Usage: mv <source> <dest>' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: mv <source> <dest>',
+      };
     }
 
     const resolvedSource = this.resolvePath(source);
     const resolvedDest = this.resolvePath(dest);
     await opfsFileSystem.renameFile(resolvedSource, resolvedDest);
-    return { success: true, output: `Moved: ${resolvedSource} -> ${resolvedDest}` };
+    return {
+      success: true,
+      output: `Moved: ${resolvedSource} -> ${resolvedDest}`,
+    };
   }
 
   private async cmdCp(source?: string, dest?: string): Promise<CommandResult> {
     if (!source || !dest) {
-      return { success: false, output: '', error: 'Usage: cp <source> <dest>' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: cp <source> <dest>',
+      };
     }
 
     const resolvedSource = this.resolvePath(source);
     const resolvedDest = this.resolvePath(dest);
     await opfsFileSystem.copyFile(resolvedSource, resolvedDest);
-    return { success: true, output: `Copied: ${resolvedSource} -> ${resolvedDest}` };
+    return {
+      success: true,
+      output: `Copied: ${resolvedSource} -> ${resolvedDest}`,
+    };
   }
 
   private cmdPwd(): CommandResult {
@@ -631,7 +865,11 @@ export class TerminalManager {
       await opfsFileSystem.listFiles();
 
       if (!opfsFileSystem.isDirectory(resolvedPath)) {
-        return { success: false, output: '', error: `Not a directory: ${resolvedPath}` };
+        return {
+          success: false,
+          output: '',
+          error: `Not a directory: ${resolvedPath}`,
+        };
       }
     }
 
@@ -643,7 +881,7 @@ export class TerminalManager {
     const resolvedPath = path ? this.resolvePath(path) : this.currentDirectory;
     const entries = await opfsFileSystem.listFiles();
 
-    const filtered = entries.filter(e => {
+    const filtered = entries.filter((e) => {
       if (!resolvedPath) return true;
       return e.path === resolvedPath || e.path.startsWith(resolvedPath + '/');
     });
@@ -659,13 +897,15 @@ export class TerminalManager {
       children: Map<string, TreeNode>;
     }
 
-    const root: TreeNode = { name: '', kind: 'directory', children: new Map() };
+    const root: TreeNode = {
+      name: '',
+      kind: 'directory',
+      children: new Map(),
+    };
 
     for (const entry of filtered) {
-      const relativePath = resolvedPath
-        ? entry.path.slice(resolvedPath.length + 1) || entry.name
-        : entry.path;
-      const parts = relativePath.split('/').filter(p => p.length > 0);
+      const relativePath = resolvedPath ? entry.path.slice(resolvedPath.length + 1) || entry.name : entry.path;
+      const parts = relativePath.split('/').filter((p) => p.length > 0);
 
       let current = root;
       for (let i = 0; i < parts.length; i++) {
@@ -717,7 +957,11 @@ export class TerminalManager {
 
   private async cmdHead(path?: string, lines: number = 10): Promise<CommandResult> {
     if (!path) {
-      return { success: false, output: '', error: 'Usage: head <path> [lines]' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: head <path> [lines]',
+      };
     }
 
     const resolvedPath = this.resolvePath(path);
@@ -730,7 +974,11 @@ export class TerminalManager {
 
   private async cmdTail(path?: string, lines: number = 10): Promise<CommandResult> {
     if (!path) {
-      return { success: false, output: '', error: 'Usage: tail <path> [lines]' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: tail <path> [lines]',
+      };
     }
 
     const resolvedPath = this.resolvePath(path);
@@ -743,7 +991,11 @@ export class TerminalManager {
 
   private async cmdGrep(pattern?: string, path?: string): Promise<CommandResult> {
     if (!pattern || !path) {
-      return { success: false, output: '', error: 'Usage: grep <pattern> <path>' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: grep <pattern> <path>',
+      };
     }
 
     const resolvedPath = this.resolvePath(path);
@@ -756,7 +1008,7 @@ export class TerminalManager {
       .filter(({ line }) => regex.test(line))
       .map(({ line, num }) => {
         // Highlight matches
-        const highlighted = line.replace(regex, match => `\x1b[1;31m${match}\x1b[0m`);
+        const highlighted = line.replace(regex, (match) => `\x1b[1;31m${match}\x1b[0m`);
         return `\x1b[1;33m${num}:\x1b[0m ${highlighted}`;
       });
 
@@ -776,7 +1028,7 @@ export class TerminalManager {
     const content = await opfsFileSystem.readFile(resolvedPath);
 
     const lines = (content.match(/\n/g) || []).length;
-    const words = content.split(/\s+/).filter(w => w.length > 0).length;
+    const words = content.split(/\s+/).filter((w) => w.length > 0).length;
     const chars = content.length;
 
     return {
@@ -787,7 +1039,11 @@ export class TerminalManager {
 
   private async cmdDiff(path1?: string, path2?: string): Promise<CommandResult> {
     if (!path1 || !path2) {
-      return { success: false, output: '', error: 'Usage: diff <file1> <file2>' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: diff <file1> <file2>',
+      };
     }
 
     const resolvedPath1 = this.resolvePath(path1);
@@ -801,7 +1057,10 @@ export class TerminalManager {
       const lines2 = content2.split('\n');
 
       if (content1 === content2) {
-        return { success: true, output: '\x1b[2m(files are identical)\x1b[0m' };
+        return {
+          success: true,
+          output: '\x1b[2m(files are identical)\x1b[0m',
+        };
       }
 
       // Simple line-by-line diff
@@ -824,7 +1083,11 @@ export class TerminalManager {
 
       return { success: true, output: output.join('\n') };
     } catch {
-      return { success: false, output: '', error: 'Failed to read one or both files' };
+      return {
+        success: false,
+        output: '',
+        error: 'Failed to read one or both files',
+      };
     }
   }
 
@@ -858,18 +1121,30 @@ export class TerminalManager {
 
   private async cmdWrite(path?: string, content?: string): Promise<CommandResult> {
     if (!path) {
-      return { success: false, output: '', error: 'Usage: write <path> <content>' };
+      return {
+        success: false,
+        output: '',
+        error: 'Usage: write <path> <content>',
+      };
     }
 
     const resolvedPath = this.resolvePath(path);
+    const finalContent = (content || '').replace(/\\n/g, '\n');
+    try {
+      if (opfsFileSystem.exists(resolvedPath)) {
+        await opfsFileSystem.writeFile(resolvedPath, finalContent);
+      } else {
+        await opfsFileSystem.createFile(resolvedPath, finalContent);
+      }
 
-    if (opfsFileSystem.exists(resolvedPath)) {
-      await opfsFileSystem.writeFile(resolvedPath, content || '');
-    } else {
-      await opfsFileSystem.createFile(resolvedPath, content || '');
+      return { success: true, output: `Written to: ${resolvedPath}` };
+    } catch (e) {
+      return {
+        success: false,
+        output: '',
+        error: `Failed to write to ${resolvedPath}: ${e instanceof Error ? e.message : String(e)}`,
+      };
     }
-
-    return { success: true, output: `Written to: ${resolvedPath}` };
   }
 
   private async cmdImport(): Promise<CommandResult> {
@@ -883,15 +1158,23 @@ export class TerminalManager {
           const entries = await opfsFileSystem.importFiles(input.files, this.currentDirectory);
           resolve({
             success: true,
-            output: `Imported ${entries.length} file(s):\n${entries.map(e => `  ${e.path}`).join('\n')}`,
+            output: `Imported ${entries.length} file(s):\n${entries.map((e) => `  ${e.path}`).join('\n')}`,
           });
         } else {
-          resolve({ success: false, output: '', error: 'No files selected' });
+          resolve({
+            success: false,
+            output: '',
+            error: 'No files selected',
+          });
         }
       };
 
       input.oncancel = () => {
-        resolve({ success: false, output: '', error: 'Import cancelled' });
+        resolve({
+          success: false,
+          output: '',
+          error: 'Import cancelled',
+        });
       };
 
       input.click();
@@ -921,7 +1204,11 @@ export class TerminalManager {
     const info = await opfsFileSystem.getStorageInfo();
 
     if (!info) {
-      return { success: false, output: '', error: 'Storage info not available' };
+      return {
+        success: false,
+        output: '',
+        error: 'Storage info not available',
+      };
     }
 
     const usedMB = (info.used / 1024 / 1024).toFixed(2);
@@ -937,7 +1224,10 @@ export class TerminalManager {
   private async cmdReset(): Promise<CommandResult> {
     await opfsFileSystem.clearAll();
     this.currentDirectory = '';
-    return { success: true, output: '\x1b[1;33mOPFS cleared. All files removed.\x1b[0m' };
+    return {
+      success: true,
+      output: '\x1b[1;33mOPFS cleared. All files removed.\x1b[0m',
+    };
   }
 
   private cmdDebug(): CommandResult {
@@ -969,7 +1259,9 @@ export class TerminalManager {
 
     this.terminal.writeln('');
     this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Input ──────────────────\x1b[0m');
-    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}`);
+    this.terminal.writeln(
+      `\x1b[1;35m│\x1b[0m \x1b[1;36mCommand:\x1b[0m ${command}${toolName !== command ? ` (→ ${resolvedCommand})` : ''}`,
+    );
 
     if (args.length > 0) {
       this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mArgs:\x1b[0m ${JSON.stringify(args)}`);
@@ -983,7 +1275,9 @@ export class TerminalManager {
    */
   private logDebugOutput(result: CommandResult): void {
     this.terminal.writeln('\x1b[1;35m┌─ Debug: Command Output ─────────────────\x1b[0m');
-    this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;36mSuccess:\x1b[0m ${result.success ? '\x1b[32mtrue\x1b[0m' : '\x1b[31mfalse\x1b[0m'}`);
+    this.terminal.writeln(
+      `\x1b[1;35m│\x1b[0m \x1b[1;36mSuccess:\x1b[0m ${result.success ? '\x1b[32mtrue\x1b[0m' : '\x1b[31mfalse\x1b[0m'}`,
+    );
 
     if (result.error) {
       this.terminal.writeln(`\x1b[1;35m│\x1b[0m \x1b[1;31mError:\x1b[0m ${result.error}`);
